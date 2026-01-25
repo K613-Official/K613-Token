@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+import {K613} from "../src/K613.sol";
+
+contract K613Test is Test {
+    K613 private token;
+
+    address private owner = address(this);
+    address private minter = address(0xBEEF);
+    address private alice = address(0xA11CE);
+
+    function setUp() public {
+        token = new K613(minter);
+    }
+
+    function testConstructorSetsMinter() public {
+        assertEq(token.minter(), minter);
+        assertEq(token.owner(), owner);
+    }
+
+    function testSetMinterOnlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        token.setMinter(alice);
+
+        token.setMinter(alice);
+        assertEq(token.minter(), alice);
+    }
+
+    function testSetMinterRejectsZero() public {
+        vm.expectRevert(K613.ZeroAddress.selector);
+        token.setMinter(address(0));
+    }
+
+    function testMintOnlyMinter() public {
+        vm.prank(alice);
+        vm.expectRevert(K613.OnlyMinter.selector);
+        token.mint(alice, 1e18);
+
+        vm.prank(minter);
+        token.mint(alice, 2e18);
+        assertEq(token.balanceOf(alice), 2e18);
+        assertEq(token.totalSupply(), 2e18);
+    }
+
+    function testBurnOnlyMinter() public {
+        vm.prank(minter);
+        token.mint(alice, 3e18);
+
+        vm.prank(alice);
+        vm.expectRevert(K613.OnlyMinter.selector);
+        token.burnFrom(alice, 1e18);
+
+        vm.prank(minter);
+        token.burnFrom(alice, 1e18);
+        assertEq(token.balanceOf(alice), 2e18);
+        assertEq(token.totalSupply(), 2e18);
+    }
+}
