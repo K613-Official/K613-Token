@@ -40,7 +40,7 @@ jobs:
       - name: Run Slither
         uses: crytic/slither-action@v0.4.2
         with:
-          ignore-compile: true
+          slither-args: --compile-force-framework foundry
 
       - name: Run Aderyn
         uses: Cyfrin/aderyn-ci@v0
