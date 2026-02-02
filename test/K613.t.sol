@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {K613} from "../src/K613.sol";
+import {K613} from "../src/token/K613.sol";
 
 contract K613Test is Test {
     K613 private token;
@@ -15,9 +15,9 @@ contract K613Test is Test {
         token = new K613(minter);
     }
 
-    function testConstructorSetsMinter() public {
+    function testConstructorSetsMinter() public view {
         assertEq(token.minter(), minter);
-        assertEq(token.owner(), owner);
+        assertTrue(token.hasRole(token.DEFAULT_ADMIN_ROLE(), owner));
     }
 
     function testSetMinterOnlyOwner() public {

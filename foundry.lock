@@ -1,4 +1,7 @@
 {
+  "lib/L2-Protocol": {
+    "rev": "e264f8f1ebf49cdd7d7a7ca386c65ccd59ad9101"
+  },
   "lib/forge-std": {
     "tag": {
       "name": "v1.14.0",

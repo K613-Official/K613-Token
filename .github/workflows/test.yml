@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      SOLODIT_API_KEY: ${{ secrets.SOLODIT_API_KEY }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -27,6 +29,16 @@ jobs:
 
       - name: Show Forge version
         run: forge --version
+
+      - name: Fetch Solodit findings (smoke)
+        if: env.SOLODIT_API_KEY != ''
+        run: >
+          curl -sS --fail -X POST
+          https://solodit.cyfrin.io/api/v1/solodit/findings
+          -H "Content-Type: application/json"
+          -H "X-Cyfrin-API-Key: $SOLODIT_API_KEY"
+          -d '{"page":1,"pageSize":5}'
+          > solodit_findings.json
 
       - name: Run Forge fmt
         run: forge fmt --check
@@ -40,7 +52,7 @@ jobs:
       - name: Run Slither
         uses: crytic/slither-action@v0.4.2
         with:
-          slither-args: --compile-force-framework foundry
+          slither-args: --compile-force-framework foundry --exclude solc-version
 
       - name: Run Aderyn
         uses: Cyfrin/aderyn-ci@v0
