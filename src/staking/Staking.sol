@@ -42,12 +42,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     event InstantExit(address indexed account, uint256 amount, uint256 penalty);
     event RewardsDistributorUpdated(address indexed distributor);
 
-    constructor(
-        address k613Token,
-        address xk613Token,
-        uint256 lockDuration_,
-        uint256 instantExitPenaltyBps_
-    ) {
+    constructor(address k613Token, address xk613Token, uint256 lockDuration_, uint256 instantExitPenaltyBps_) {
         if (k613Token == address(0) || xk613Token == address(0)) {
             revert ZeroAddress();
         }
