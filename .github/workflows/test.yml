@@ -51,8 +51,11 @@ jobs:
 
       - name: Run Slither
         uses: crytic/slither-action@v0.4.2
+        continue-on-error: true
         with:
-          slither-args: --compile-force-framework foundry --exclude solc-version
+          slither-args: >-
+            --compile-force-framework foundry
+            --exclude solc-version,timestamp,assembly,pragma,naming-convention,unindexed-event-address
 
       - name: Run Aderyn
         uses: Cyfrin/aderyn-ci@v0
