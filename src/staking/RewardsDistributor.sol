@@ -12,7 +12,6 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
 
     error ZeroAddress();
     error ZeroAmount();
-    error OnlyStaking();
     error InsufficientBalance();
     error NoRewards();
 
@@ -20,6 +19,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     address public staking;
 
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    bytes32 public constant REWARDS_NOTIFIER_ROLE = keccak256("REWARDS_NOTIFIER_ROLE");
 
     uint256 public accRewardPerShare;
     uint256 public pendingRewards;
@@ -35,13 +35,6 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     event RewardNotified(uint256 amount);
     event StakingUpdated(address indexed staking);
 
-    modifier onlyStaking() {
-        if (msg.sender != staking) {
-            revert OnlyStaking();
-        }
-        _;
-    }
-
     constructor(address xk613Token) {
         if (xk613Token == address(0)) {
             revert ZeroAddress();
@@ -55,7 +48,11 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         if (staking_ == address(0)) {
             revert ZeroAddress();
         }
+        if (staking != address(0)) {
+            _revokeRole(REWARDS_NOTIFIER_ROLE, staking);
+        }
         staking = staking_;
+        _grantRole(REWARDS_NOTIFIER_ROLE, staking_);
         emit StakingUpdated(staking_);
     }
 
@@ -98,7 +95,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         emit Claimed(msg.sender, reward);
     }
 
-    function notifyReward(uint256 amount) external onlyStaking whenNotPaused {
+    function notifyReward(uint256 amount) external onlyRole(REWARDS_NOTIFIER_ROLE) whenNotPaused {
         if (amount == 0) {
             revert ZeroAmount();
         }
