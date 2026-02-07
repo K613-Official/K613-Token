@@ -2,6 +2,7 @@
 pragma solidity 0.8.33;
 
 import {Test} from "forge-std/Test.sol";
+import {IAccessControl} from "openzeppelin-contracts/contracts/access/IAccessControl.sol";
 import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
 import {xK613} from "../src/token/xK613.sol";
 
@@ -79,8 +80,12 @@ contract RewardsDistributorTest is Test {
         distributor.claim();
     }
 
-    function testNotifyRewardOnlyStaking() public {
-        vm.expectRevert(RewardsDistributor.OnlyStaking.selector);
+    function testNotifyRewardOnlyAuthorized() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, distributor.REWARDS_NOTIFIER_ROLE()
+            )
+        );
         vm.prank(alice);
         distributor.notifyReward(1 * ONE);
     }
