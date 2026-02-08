@@ -35,6 +35,12 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
     xK613 public immutable xk613;
     RewardsDistributor public immutable rewardsDistributor;
 
+    /// @notice Emitted when admin withdraws tokens.
+    /// @param token Token withdrawn.
+    /// @param to Recipient.
+    /// @param amount Amount withdrawn.
+    event Withdrawn(address indexed token, address indexed to, uint256 amount);
+
     /// @notice Emitted when a buyback is executed.
     /// @param tokenIn Token swapped in for K613.
     /// @param router DEX router used for the swap.
@@ -109,6 +115,21 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
             rewardsDistributor.notifyReward(k613Out);
         }
         emit BuybackExecuted(tokenIn, router, amountIn, k613Out, distributeRewards);
+    }
+
+    /// @notice Withdraws any ERC20 token from the Treasury. Only callable by DEFAULT_ADMIN_ROLE.
+    /// @param token Token to withdraw.
+    /// @param to Recipient address.
+    /// @param amount Amount to withdraw.
+    function withdraw(address token, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+        if (token == address(0) || to == address(0)) {
+            revert ZeroAddress();
+        }
+        if (amount == 0) {
+            revert ZeroAmount();
+        }
+        IERC20(token).safeTransfer(to, amount);
+        emit Withdrawn(token, to, amount);
     }
 
     /// @notice Pauses deposit and buyback operations. Only callable by PAUSER_ROLE.

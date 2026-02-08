@@ -5,9 +5,13 @@ import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
+interface IRewardsDistributor {
+    function handleAction(address user, uint256 totalSupply, uint256 userBalance) external;
+}
+
 /// @title xK613
-/// @notice Staking receipt token representing staked K613. Transfers are restricted to whitelisted addresses.
-/// @dev Only addresses in the transfer whitelist can send or receive xK613. Minting/burning is controlled by MINTER_ROLE.
+/// @notice Staking receipt token. Rewards accrue to holders (Aave-style). Calls handleAction on transfer/mint/burn.
+/// @dev Transfers restricted to whitelist. Minting/burning by MINTER_ROLE. Calls RewardsDistributor.handleAction.
 contract xK613 is ERC20, AccessControl, Pausable {
     /// @notice Thrown when a zero address is passed as a parameter.
     error ZeroAddress();
@@ -21,6 +25,8 @@ contract xK613 is ERC20, AccessControl, Pausable {
 
     /// @notice Current address authorized to mint and burn tokens.
     address public minter;
+    /// @notice RewardsDistributor address. If set, calls handleAction on every transfer/mint/burn.
+    address public rewardsDistributor;
     /// @notice Mapping of addresses allowed to send and receive xK613.
     mapping(address => bool) public transferWhitelist;
 
@@ -56,6 +62,12 @@ contract xK613 is ERC20, AccessControl, Pausable {
         emit MinterUpdated(minter, newMinter);
         minter = newMinter;
         _grantRole(MINTER_ROLE, newMinter);
+    }
+
+    /// @notice Sets the RewardsDistributor. Only callable by DEFAULT_ADMIN_ROLE.
+    /// @param distributor_ RewardsDistributor address. Set to address(0) to disable.
+    function setRewardsDistributor(address distributor_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        rewardsDistributor = distributor_;
     }
 
     /// @notice Adds or removes an address from the transfer whitelist.
@@ -96,7 +108,7 @@ contract xK613 is ERC20, AccessControl, Pausable {
         _unpause();
     }
 
-    /// @dev Overrides _update to enforce whitelist and pause. Transfers require both sender and receiver to be whitelisted.
+    /// @dev Overrides _update: enforce whitelist, pause, then call RewardsDistributor.handleAction on from/to.
     function _update(address from, address to, uint256 value) internal override {
         _requireNotPaused();
         if (from != address(0) && to != address(0)) {
@@ -105,5 +117,15 @@ contract xK613 is ERC20, AccessControl, Pausable {
             }
         }
         super._update(from, to, value);
+
+        if (rewardsDistributor != address(0)) {
+            uint256 supply = totalSupply();
+            if (from != address(0) && from != rewardsDistributor) {
+                IRewardsDistributor(rewardsDistributor).handleAction(from, supply, balanceOf(from));
+            }
+            if (to != address(0) && to != rewardsDistributor && from != rewardsDistributor) {
+                IRewardsDistributor(rewardsDistributor).handleAction(to, supply, balanceOf(to));
+            }
+        }
     }
 }

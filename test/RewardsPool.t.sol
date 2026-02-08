@@ -19,59 +19,16 @@ contract RewardsDistributorTest is Test {
         token = new xK613(address(this));
         distributor = new RewardsDistributor(address(token));
         distributor.setStaking(address(this));
+        token.setRewardsDistributor(address(distributor));
         token.setTransferWhitelist(address(distributor), true);
 
         token.mint(alice, 1_000 * ONE);
         token.mint(bob, 1_000 * ONE);
-
-        vm.prank(alice);
-        token.approve(address(distributor), type(uint256).max);
-        vm.prank(bob);
-        token.approve(address(distributor), type(uint256).max);
     }
 
     function testConstructorRevertsOnZero() public {
         vm.expectRevert(RewardsDistributor.ZeroAddress.selector);
         new RewardsDistributor(address(0));
-    }
-
-    function testDepositUpdatesBalances() public {
-        vm.prank(alice);
-        distributor.deposit(100 * ONE);
-
-        assertEq(distributor.totalDeposits(), 100 * ONE);
-        assertEq(distributor.balanceOf(alice), 100 * ONE);
-        assertEq(token.balanceOf(alice), 900 * ONE);
-    }
-
-    function testDepositZeroReverts() public {
-        vm.expectRevert(RewardsDistributor.ZeroAmount.selector);
-        vm.prank(alice);
-        distributor.deposit(0);
-    }
-
-    function testWithdrawUpdatesBalances() public {
-        vm.prank(alice);
-        distributor.deposit(100 * ONE);
-
-        vm.prank(alice);
-        distributor.withdraw(40 * ONE);
-
-        assertEq(distributor.totalDeposits(), 60 * ONE);
-        assertEq(distributor.balanceOf(alice), 60 * ONE);
-        assertEq(token.balanceOf(alice), 940 * ONE);
-    }
-
-    function testWithdrawRevertsOnInvalidAmount() public {
-        vm.expectRevert(RewardsDistributor.ZeroAmount.selector);
-        vm.prank(alice);
-        distributor.withdraw(0);
-
-        vm.prank(alice);
-        distributor.deposit(10 * ONE);
-        vm.expectRevert(RewardsDistributor.InsufficientBalance.selector);
-        vm.prank(alice);
-        distributor.withdraw(20 * ONE);
     }
 
     function testClaimRevertsWithoutRewards() public {
@@ -90,32 +47,43 @@ contract RewardsDistributorTest is Test {
         distributor.notifyReward(1 * ONE);
     }
 
-    function testNotifyRewardDistributesAfterDeposit() public {
+    function testNotifyRewardDistributesToHolders() public {
         token.mint(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
-        assertEq(distributor.pendingRewards(), 10 * ONE);
 
-        vm.prank(alice);
-        distributor.deposit(100 * ONE);
-
+        uint256 aliceBefore = token.balanceOf(alice);
         vm.prank(alice);
         distributor.claim();
+        uint256 aliceAfter = token.balanceOf(alice);
 
-        assertEq(token.balanceOf(alice), 910 * ONE);
+        uint256 aliceShare = (1_000 * ONE * 10 * ONE) / (2_000 * ONE + 10 * ONE);
+        assertApproxEqAbs(aliceAfter - aliceBefore, aliceShare, 1000);
         assertEq(distributor.pendingRewards(), 0);
     }
 
     function testClaimTransfersReward() public {
-        vm.prank(alice);
-        distributor.deposit(100 * ONE);
-
         token.mint(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
 
         vm.prank(alice);
         distributor.claim();
 
-        assertEq(token.balanceOf(alice), 910 * ONE);
+        uint256 aliceShare = (1_000 * ONE * 10 * ONE) / (2_000 * ONE + 10 * ONE);
+        assertApproxEqAbs(token.balanceOf(alice), 1_000 * ONE + aliceShare, 1000);
         assertEq(distributor.userPendingRewards(alice), 0);
+    }
+
+    function testPendingRewardsOf() public {
+        token.mint(address(distributor), 10 * ONE);
+        distributor.notifyReward(10 * ONE);
+
+        uint256 aliceShare = (1_000 * ONE * 10 * ONE) / (2_000 * ONE + 10 * ONE);
+        assertApproxEqAbs(distributor.pendingRewardsOf(alice), aliceShare, 1000);
+        assertApproxEqAbs(distributor.pendingRewardsOf(bob), aliceShare, 1000);
+    }
+
+    function testHandleActionOnlyXK613() public {
+        vm.expectRevert(RewardsDistributor.OnlyXK613.selector);
+        distributor.handleAction(alice, 1_000 * ONE, 100 * ONE);
     }
 }

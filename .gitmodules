@@ -7,3 +7,9 @@
 [submodule "lib/L2-Protocol"]
 	path = lib/L2-Protocol
 	url = https://github.com/K613-Official/L2-Protocol
+[submodule "lib/shadow-core"]
+	path = lib/shadow-core
+	url = https://github.com/Shadow-Exchange/shadow-core
+[submodule "lib/k613-markets-config"]
+	path = lib/k613-markets-config
+	url = https://github.com/K613-Official/k613-markets-config
