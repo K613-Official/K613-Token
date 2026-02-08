@@ -11,8 +11,10 @@ import {xK613} from "../token/xK613.sol";
 import {RewardsDistributor} from "./RewardsDistributor.sol";
 
 /// @title Staking
-/// @notice Staking contract for K613. Users stake K613, receive xK613, and can exit after lock period or pay penalty for instant exit.
-/// @dev Locked stakes can exit via instantExit with penalty; the penalty goes to RewardsDistributor.
+/// @notice Shadow xShadow-style staking: deposit K613, lock for duration, receive xK613. Exit after lock or instant-exit with penalty.
+/// @dev Simplified from Shadow (shadow.so/xshadow), no x33. Lock is fixed per deposit.
+///      Penalty from instant exit goes to RewardsDistributor as xK613 for stakers.
+/// @custom:source Adapted from Shadow xShadow (lib/shadow-core/contracts/xShadow/XShadow.sol)
 contract Staking is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 

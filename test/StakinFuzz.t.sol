@@ -28,6 +28,7 @@ contract StakingFuzzTest is Test {
         distributor.setStaking(address(staking));
 
         xk613.setMinter(address(staking));
+        xk613.setRewardsDistributor(address(distributor));
         xk613.setTransferWhitelist(address(distributor), true);
     }
 
@@ -96,6 +97,5 @@ contract StakingFuzzTest is Test {
         assertEq(xk613.balanceOf(user), 0);
         assertEq(k613.balanceOf(user), payout);
         assertEq(xk613.balanceOf(address(distributor)), penalty);
-        assertEq(distributor.pendingRewards(), penalty);
     }
 }

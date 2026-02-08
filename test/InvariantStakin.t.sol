@@ -75,34 +75,11 @@ contract StakingHandler is Test {
         staking.exit();
     }
 
-    function rewardsDeposit(uint256 rawAmount, uint256 actorSeed) external {
-        address actor = actors[actorSeed % actors.length];
-        uint256 balance = xk613.balanceOf(actor);
-        if (balance == 0) {
-            return;
-        }
-        uint256 amount = bound(rawAmount, 1, balance);
-        vm.startPrank(actor);
-        if (xk613.allowance(actor, address(distributor)) < amount) {
-            xk613.approve(address(distributor), type(uint256).max);
-        }
-        distributor.deposit(amount);
-        vm.stopPrank();
-    }
-
-    function rewardsWithdraw(uint256 rawAmount, uint256 actorSeed) external {
-        address actor = actors[actorSeed % actors.length];
-        uint256 balance = distributor.balanceOf(actor);
-        if (balance == 0) {
-            return;
-        }
-        uint256 amount = bound(rawAmount, 1, balance);
-        vm.prank(actor);
-        distributor.withdraw(amount);
-    }
-
     function rewardsClaim(uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
+        if (distributor.pendingRewardsOf(actor) == 0) {
+            return;
+        }
         vm.prank(actor);
         distributor.claim();
     }
@@ -135,6 +112,7 @@ contract InvariantStakingTest is StdInvariant, Test {
         distributor.setStaking(address(staking));
 
         xk613.setMinter(address(staking));
+        xk613.setRewardsDistributor(address(distributor));
         xk613.setTransferWhitelist(address(distributor), true);
 
         handler = new StakingHandler(k613, xk613, staking, distributor, actors, LOCK_DURATION);
@@ -152,19 +130,12 @@ contract InvariantStakingTest is StdInvariant, Test {
         assertGe(k613.balanceOf(address(staking)), totalDeposits);
     }
 
-    function invariant_rewardsDepositsAccounting() public view {
-        uint256 totalDeposits = 0;
-        for (uint256 i = 0; i < actors.length; i++) {
-            totalDeposits += distributor.balanceOf(actors[i]);
-        }
-        assertEq(distributor.totalDeposits(), totalDeposits);
-    }
-
     function invariant_xk613SupplyMatchesBalances() public view {
-        uint256 totalBalances = xk613.balanceOf(address(distributor));
+        uint256 totalBalances = 0;
         for (uint256 i = 0; i < actors.length; i++) {
             totalBalances += xk613.balanceOf(actors[i]);
         }
+        totalBalances += xk613.balanceOf(address(distributor));
         assertEq(xk613.totalSupply(), totalBalances);
     }
 }

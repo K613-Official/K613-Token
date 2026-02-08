@@ -13,5 +13,8 @@
       "name": "v5.5.0",
       "rev": "fcbae5394ae8ad52d8e580a3477db99814b9d565"
     }
+  },
+  "lib/shadow-core": {
+    "rev": "bb3fa4fc6a257aee99cdcf58a0b8b38e51d4a9f7"
   }
 }

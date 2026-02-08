@@ -8,58 +8,34 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title RewardsDistributor
-/// @notice Distributes xK613 rewards to depositors proportionally. Uses accumulator-based reward math.
-/// @dev Users deposit xK613 to earn rewards. Treasury and Staking notify rewards; users claim via claim().
+/// @notice Aave-style: rewards accrue to xK613 holders directly. No deposit. xK613 calls handleAction on every transfer/mint/burn.
+/// @dev handleAction updates user reward accounting. notifyReward (penalties + buybacks) increases accRewardPerShare.
+/// @custom:source handleAction pattern from Aave RewardsController (lib/L2-Protocol/src/contracts/rewards/RewardsController.sol)
 contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    /// @notice Thrown when a zero address is passed as a parameter.
     error ZeroAddress();
-    /// @notice Thrown when amount is zero where a positive value is required.
     error ZeroAmount();
-    /// @notice Thrown when withdraw amount exceeds user balance.
-    error InsufficientBalance();
-    /// @notice Thrown when claim is called but user has no pending rewards.
     error NoRewards();
+    error OnlyXK613();
 
     IERC20 public immutable xk613;
-    address public staking;
 
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 public constant REWARDS_NOTIFIER_ROLE = keccak256("REWARDS_NOTIFIER_ROLE");
 
-    /// @notice Accumulated reward per share (scaled by 1e18).
     uint256 public accRewardPerShare;
-    /// @notice Rewards notified but not yet distributed (no depositors).
     uint256 public pendingRewards;
-    /// @notice Total xK613 deposited across all users.
-    uint256 public totalDeposits;
 
-    mapping(address => uint256) public balanceOf;
     mapping(address => uint256) public userRewardDebt;
     mapping(address => uint256) public userPendingRewards;
 
-    /// @notice Emitted when a user deposits xK613.
-    /// @param account Depositor address.
-    /// @param amount Amount deposited.
-    event Deposited(address indexed account, uint256 amount);
-    /// @notice Emitted when a user withdraws xK613.
-    /// @param account Withdrawer address.
-    /// @param amount Amount withdrawn.
-    event Withdrawn(address indexed account, uint256 amount);
-    /// @notice Emitted when a user claims rewards.
-    /// @param account Claimant address.
-    /// @param amount Amount claimed.
     event Claimed(address indexed account, uint256 amount);
-    /// @notice Emitted when new rewards are notified/distributed.
-    /// @param amount Amount of rewards.
     event RewardNotified(uint256 amount);
-    /// @notice Emitted when the staking contract (REWARDS_NOTIFIER) is updated.
-    /// @param staking New staking address.
     event StakingUpdated(address indexed staking);
 
-    /// @notice Deploys the RewardsDistributor.
-    /// @param xk613Token Address of the xK613 token.
+    address public staking;
+
     constructor(address xk613Token) {
         if (xk613Token == address(0)) {
             revert ZeroAddress();
@@ -70,7 +46,6 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Sets the staking contract as REWARDS_NOTIFIER (receives instant exit penalties).
-    /// @param staking_ Address of the Staking contract.
     function setStaking(address staking_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (staking_ == address(0)) {
             revert ZeroAddress();
@@ -83,41 +58,35 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         emit StakingUpdated(staking_);
     }
 
-    /// @notice Deposits xK613 to earn rewards.
-    /// @param amount Amount of xK613 to deposit.
-    function deposit(uint256 amount) external nonReentrant whenNotPaused {
-        if (amount == 0) {
-            revert ZeroAmount();
+    /// @param user Address whose xK613 balance changed.
+    /// @param totalSupply xK613 total supply after the change.
+    /// @param userBalance User's xK613 balance after the change.
+    function handleAction(address user, uint256 totalSupply, uint256 userBalance) external whenNotPaused {
+        if (msg.sender != address(xk613)) {
+            revert OnlyXK613();
         }
-        _updateUser(msg.sender);
-        totalDeposits += amount;
-        balanceOf[msg.sender] += amount;
-        userRewardDebt[msg.sender] = (balanceOf[msg.sender] * accRewardPerShare) / 1e18;
-        xk613.safeTransferFrom(msg.sender, address(this), amount);
-        emit Deposited(msg.sender, amount);
+        _distributePending(totalSupply);
+        uint256 accumulated = (userBalance * accRewardPerShare) / 1e18;
+        if (accumulated > userRewardDebt[user]) {
+            userPendingRewards[user] += (accumulated - userRewardDebt[user]);
+        }
+        userRewardDebt[user] = accumulated;
     }
 
-    /// @notice Withdraws xK613 from the distributor.
-    /// @param amount Amount of xK613 to withdraw.
-    function withdraw(uint256 amount) external nonReentrant whenNotPaused {
-        if (amount == 0) {
-            revert ZeroAmount();
-        }
-        uint256 balance = balanceOf[msg.sender];
-        if (balance < amount) {
-            revert InsufficientBalance();
-        }
-        _updateUser(msg.sender);
-        balanceOf[msg.sender] = balance - amount;
-        totalDeposits -= amount;
-        userRewardDebt[msg.sender] = (balanceOf[msg.sender] * accRewardPerShare) / 1e18;
-        xk613.safeTransfer(msg.sender, amount);
-        emit Withdrawn(msg.sender, amount);
-    }
-
-    /// @notice Claims accumulated rewards.
+    /// @notice Claims accumulated rewards in xK613.
+    // aderyn-ignore-next-line(reentrancy-state-change)
     function claim() external nonReentrant whenNotPaused {
-        _updateUser(msg.sender);
+        // aderyn-ignore-next-line
+        uint256 totalSupply = xk613.totalSupply();
+        // aderyn-ignore-next-line
+        uint256 userBalance = xk613.balanceOf(msg.sender);
+        _distributePending(totalSupply);
+        uint256 accumulated = (userBalance * accRewardPerShare) / 1e18;
+        if (accumulated > userRewardDebt[msg.sender]) {
+            userPendingRewards[msg.sender] += (accumulated - userRewardDebt[msg.sender]);
+        }
+        userRewardDebt[msg.sender] = accumulated;
+
         uint256 reward = userPendingRewards[msg.sender];
         if (reward == 0) {
             revert NoRewards();
@@ -128,48 +97,50 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Notifies new rewards. Called by Treasury and Staking (REWARDS_NOTIFIER_ROLE).
-    /// @param amount Amount of xK613 rewards to distribute.
-    function notifyReward(uint256 amount) external onlyRole(REWARDS_NOTIFIER_ROLE) whenNotPaused {
+    function notifyReward(uint256 amount) external nonReentrant onlyRole(REWARDS_NOTIFIER_ROLE) whenNotPaused {
         if (amount == 0) {
             revert ZeroAmount();
         }
-        if (totalDeposits == 0) {
+        // aderyn-ignore-next-line
+        uint256 totalSupply = xk613.totalSupply();
+        if (totalSupply == 0) {
             pendingRewards += amount;
             return;
         }
-        accRewardPerShare += (amount * 1e18) / totalDeposits;
+        accRewardPerShare += (amount * 1e18) / totalSupply;
         emit RewardNotified(amount);
     }
 
-    /// @notice Pauses deposit, withdraw, claim, and notifyReward. Only callable by PAUSER_ROLE.
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
 
-    /// @notice Resumes operations. Only callable by PAUSER_ROLE.
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }
 
-    /// @dev Updates user's reward debt and pending rewards based on accRewardPerShare.
-    function _updateUser(address account) internal {
-        _distributePending();
-        uint256 accumulated = (balanceOf[account] * accRewardPerShare) / 1e18;
-        uint256 pending = accumulated - userRewardDebt[account];
-        if (pending > 0) {
-            userPendingRewards[account] += pending;
-        }
-        userRewardDebt[account] = accumulated;
-    }
-
-    /// @dev Distributes pending rewards into accRewardPerShare when totalDeposits > 0.
-    function _distributePending() internal {
-        if (pendingRewards == 0 || totalDeposits == 0) {
+    function _distributePending(uint256 totalSupply) internal {
+        if (pendingRewards == 0 || totalSupply == 0) {
             return;
         }
         uint256 amount = pendingRewards;
         pendingRewards = 0;
-        accRewardPerShare += (amount * 1e18) / totalDeposits;
+        accRewardPerShare += (amount * 1e18) / totalSupply;
         emit RewardNotified(amount);
+    }
+
+    /// @notice Returns pending rewards for an account
+    function pendingRewardsOf(address account) external view returns (uint256) {
+        uint256 totalSupply = xk613.totalSupply();
+        if (totalSupply == 0) {
+            return userPendingRewards[account];
+        }
+        uint256 accReward = accRewardPerShare;
+        if (pendingRewards > 0) {
+            accReward += (pendingRewards * 1e18) / totalSupply;
+        }
+        uint256 accumulated = (xk613.balanceOf(account) * accReward) / 1e18;
+        uint256 pending = accumulated > userRewardDebt[account] ? accumulated - userRewardDebt[account] : 0;
+        return userPendingRewards[account] + pending;
     }
 }
