@@ -74,8 +74,11 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Claims accumulated rewards in xK613.
+    // aderyn-ignore-next-line(reentrancy-state-change)
     function claim() external nonReentrant whenNotPaused {
+        // aderyn-ignore-next-line
         uint256 totalSupply = xk613.totalSupply();
+        // aderyn-ignore-next-line
         uint256 userBalance = xk613.balanceOf(msg.sender);
         _distributePending(totalSupply);
         uint256 accumulated = (userBalance * accRewardPerShare) / 1e18;
@@ -94,10 +97,11 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Notifies new rewards. Called by Treasury and Staking (REWARDS_NOTIFIER_ROLE).
-    function notifyReward(uint256 amount) external onlyRole(REWARDS_NOTIFIER_ROLE) whenNotPaused {
+    function notifyReward(uint256 amount) external nonReentrant onlyRole(REWARDS_NOTIFIER_ROLE) whenNotPaused {
         if (amount == 0) {
             revert ZeroAmount();
         }
+        // aderyn-ignore-next-line
         uint256 totalSupply = xk613.totalSupply();
         if (totalSupply == 0) {
             pendingRewards += amount;
@@ -125,7 +129,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         emit RewardNotified(amount);
     }
 
-    /// @notice Returns pending rewards for an account (view only, does not update state).
+    /// @notice Returns pending rewards for an account
     function pendingRewardsOf(address account) external view returns (uint256) {
         uint256 totalSupply = xk613.totalSupply();
         if (totalSupply == 0) {

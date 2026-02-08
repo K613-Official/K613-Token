@@ -68,7 +68,7 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Deposits K613 rewards: transfers tokens from caller, mints xK613 to RewardsDistributor, and notifies rewards.
     /// @param amount Amount of K613 to deposit. If zero, the call is a no-op.
-    function depositRewards(uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant whenNotPaused {
+    function depositRewards(uint256 amount) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (amount == 0) {
             return;
         }
@@ -121,7 +121,7 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
     /// @param token Token to withdraw.
     /// @param to Recipient address.
     /// @param amount Amount to withdraw.
-    function withdraw(address token, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    function withdraw(address token, address to, uint256 amount) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
         if (token == address(0) || to == address(0)) {
             revert ZeroAddress();
         }
