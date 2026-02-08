@@ -10,7 +10,7 @@ interface IRewardsDistributor {
 }
 
 /// @title xK613
-/// @notice Staking receipt token. Rewards accrue to holders (Aave-style). Calls handleAction on transfer/mint/burn.
+/// @notice Staking receipt token. Rewards accrue to holders. Calls handleAction on transfer/mint/burn.
 /// @dev Transfers restricted to whitelist. Minting/burning by MINTER_ROLE. Calls RewardsDistributor.handleAction.
 contract xK613 is ERC20, AccessControl, Pausable {
     /// @notice Thrown when a zero address is passed as a parameter.
