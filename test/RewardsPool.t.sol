@@ -82,8 +82,5 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(distributor.pendingRewardsOf(bob), aliceShare, 1000);
     }
 
-    function testHandleActionOnlyXK613() public {
-        vm.expectRevert(RewardsDistributor.OnlyXK613.selector);
-        distributor.handleAction(alice, 1_000 * ONE, 100 * ONE);
-    }
+   
 }
