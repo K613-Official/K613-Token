@@ -32,11 +32,17 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     error InsufficientBalance();
     /// @notice Thrown when instantExit is called but RewardsDistributor is not set.
     error RewardsDistributorNotSet();
+    /// @notice Thrown when exit or instantExit is called but user has not initiated exit.
+    error ExitNotInitiated();
+    /// @notice Thrown when initiateExit is called but user has nothing staked.
+    error NothingToInitiate();
+    /// @notice Thrown when cancelExit is called but exit was not initiated.
+    error ExitNotInitiatedToCancel();
 
     /// @notice Represents a user's staked position.
     struct Deposit {
         uint256 amount;
-        uint256 depositTimestamp;
+        uint256 exitInitiatedAt; // 0 = not initiated; >0 = lock countdown started at this timestamp
     }
 
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
@@ -55,8 +61,14 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     /// @notice Emitted when a user stakes K613.
     /// @param account Staker address.
     /// @param amount Amount staked.
-    /// @param depositTimestamp Timestamp of the stake.
-    event Staked(address indexed account, uint256 amount, uint256 depositTimestamp);
+    event Staked(address indexed account, uint256 amount);
+    /// @notice Emitted when a user initiates exit (starts lock countdown).
+    /// @param account User address.
+    /// @param exitInitiatedAt Timestamp when exit was initiated.
+    event ExitInitiated(address indexed account, uint256 exitInitiatedAt);
+    /// @notice Emitted when a user cancels initiated exit.
+    /// @param account User address.
+    event ExitCancelled(address indexed account);
     /// @notice Emitted when a user exits after lock period.
     /// @param account Exiter address.
     /// @param amount Amount withdrawn.
@@ -108,20 +120,46 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         }
         Deposit storage info = deposits[msg.sender];
         info.amount += amount;
-        info.depositTimestamp = block.timestamp;
         k613.safeTransferFrom(msg.sender, address(this), amount);
         xk613.mint(msg.sender, amount);
-        emit Staked(msg.sender, amount, info.depositTimestamp);
+        emit Staked(msg.sender, amount);
+    }
+
+    /// @notice Initiates exit process. Starts lock countdown. User can cancel before lock ends.
+    function initiateExit() external nonReentrant whenNotPaused {
+        Deposit storage info = deposits[msg.sender];
+        if (info.amount == 0) {
+            revert NothingToInitiate();
+        }
+        if (info.exitInitiatedAt != 0) {
+            return; // Already initiated
+        }
+        info.exitInitiatedAt = block.timestamp;
+        emit ExitInitiated(msg.sender, block.timestamp);
+    }
+
+    /// @notice Cancels initiated exit. Resets exit countdown.
+    function cancelExit() external nonReentrant whenNotPaused {
+        Deposit storage info = deposits[msg.sender];
+        if (info.exitInitiatedAt == 0) {
+            revert ExitNotInitiatedToCancel();
+        }
+        info.exitInitiatedAt = 0;
+        emit ExitCancelled(msg.sender);
     }
 
     /// @notice Exits staked position after lock period. Burns xK613 and returns K613.
+    /// @dev Requires exit to be initiated first via initiateExit().
     function exit() external nonReentrant whenNotPaused {
         Deposit storage info = deposits[msg.sender];
         uint256 amount = info.amount;
         if (amount == 0) {
             revert InsufficientBalance();
         }
-        if (block.timestamp < info.depositTimestamp + lockDuration) {
+        if (info.exitInitiatedAt == 0) {
+            revert ExitNotInitiated();
+        }
+        if (block.timestamp < info.exitInitiatedAt + lockDuration) {
             revert Locked();
         }
         delete deposits[msg.sender];
@@ -131,6 +169,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Exits before lock end with penalty. Penalty is sent to RewardsDistributor.
+    /// @dev Requires exit to be initiated first via initiateExit().
     /// @param amount Amount of K613 (staked) to exit.
     function instantExit(uint256 amount) external nonReentrant whenNotPaused {
         if (amount == 0) {
@@ -140,7 +179,10 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         if (info.amount < amount) {
             revert InsufficientBalance();
         }
-        if (block.timestamp >= info.depositTimestamp + lockDuration) {
+        if (info.exitInitiatedAt == 0) {
+            revert ExitNotInitiated();
+        }
+        if (block.timestamp >= info.exitInitiatedAt + lockDuration) {
             revert Unlocked();
         }
         if (address(rewardsDistributor) == address(0)) {
@@ -148,7 +190,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         }
         info.amount -= amount;
         if (info.amount == 0) {
-            info.depositTimestamp = 0;
+            info.exitInitiatedAt = 0;
         }
         uint256 penalty = (amount * instantExitPenaltyBps) / 10_000;
         uint256 payout = amount - penalty;

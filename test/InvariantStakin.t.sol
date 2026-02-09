@@ -46,14 +46,34 @@ contract StakingHandler is Test {
         vm.stopPrank();
     }
 
+    function initiateExit(uint256 actorSeed) external {
+        address actor = actors[actorSeed % actors.length];
+        (uint256 deposited, uint256 exitInitiatedAt) = staking.deposits(actor);
+        if (deposited == 0 || exitInitiatedAt != 0) {
+            return;
+        }
+        vm.prank(actor);
+        staking.initiateExit();
+    }
+
+    function cancelExit(uint256 actorSeed) external {
+        address actor = actors[actorSeed % actors.length];
+        (, uint256 exitInitiatedAt) = staking.deposits(actor);
+        if (exitInitiatedAt == 0) {
+            return;
+        }
+        vm.prank(actor);
+        staking.cancelExit();
+    }
+
     function instantExit(uint256 rawAmount, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
-        (uint256 deposited, uint256 depositedAt) = staking.deposits(actor);
-        if (deposited == 0) {
+        (uint256 deposited, uint256 exitInitiatedAt) = staking.deposits(actor);
+        if (deposited == 0 || exitInitiatedAt == 0) {
             return;
         }
         uint256 amount = bound(rawAmount, 1, deposited);
-        uint256 unlockAt = depositedAt + lockDuration;
+        uint256 unlockAt = exitInitiatedAt + lockDuration;
         if (block.timestamp >= unlockAt) {
             vm.warp(unlockAt - 1);
         }
@@ -63,11 +83,11 @@ contract StakingHandler is Test {
 
     function exit(uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
-        (uint256 deposited, uint256 depositedAt) = staking.deposits(actor);
-        if (deposited == 0) {
+        (uint256 deposited, uint256 exitInitiatedAt) = staking.deposits(actor);
+        if (deposited == 0 || exitInitiatedAt == 0) {
             return;
         }
-        uint256 unlockAt = depositedAt + lockDuration;
+        uint256 unlockAt = exitInitiatedAt + lockDuration;
         if (block.timestamp < unlockAt) {
             vm.warp(unlockAt);
         }
