@@ -81,6 +81,4 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(distributor.pendingRewardsOf(alice), aliceShare, 1000);
         assertApproxEqAbs(distributor.pendingRewardsOf(bob), aliceShare, 1000);
     }
-
-   
 }
