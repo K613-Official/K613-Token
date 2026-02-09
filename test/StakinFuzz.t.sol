@@ -60,6 +60,7 @@ contract StakingFuzzTest is Test {
         vm.startPrank(user);
         k613.approve(address(staking), amount);
         staking.stake(amount);
+        staking.initiateExit();
         vm.stopPrank();
 
         vm.warp(block.timestamp + LOCK_DURATION);
@@ -83,6 +84,7 @@ contract StakingFuzzTest is Test {
         vm.startPrank(user);
         k613.approve(address(staking), amount);
         staking.stake(amount);
+        staking.initiateExit();
         vm.stopPrank();
 
         vm.warp(block.timestamp + LOCK_DURATION - 1);
