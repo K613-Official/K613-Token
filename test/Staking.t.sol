@@ -31,23 +31,22 @@ contract StakingTest is Test {
         distributor.setStaking(address(staking));
 
         xk613.setMinter(address(staking));
-        xk613.setRewardsDistributor(address(distributor));
         xk613.setTransferWhitelist(address(distributor), true);
+        xk613.setTransferWhitelist(address(staking), true);
 
         k613.mint(alice, 10_000 * ONE);
         k613.mint(bob, 10_000 * ONE);
     }
 
-    function test_Stake_MintsxK613() public {
+    function test_Stake_DepositsInRD() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
         vm.prank(alice);
         staking.stake(100 * ONE);
 
-        (uint256 amount, uint256 exitInitiatedAt) = staking.deposits(alice);
+        (uint256 amount,) = staking.deposits(alice);
         assertEq(amount, 100 * ONE);
-        assertEq(exitInitiatedAt, 0);
-        assertEq(xk613.balanceOf(alice), 100 * ONE);
+        assertEq(distributor.balanceOf(alice), 100 * ONE);
         assertEq(k613.balanceOf(address(staking)), 100 * ONE);
     }
 
@@ -66,7 +65,7 @@ contract StakingTest is Test {
 
         (uint256 amount,) = staking.deposits(alice);
         assertEq(amount, 150 * ONE);
-        assertEq(xk613.balanceOf(alice), 150 * ONE);
+        assertEq(distributor.balanceOf(alice), 150 * ONE);
     }
 
     function test_InitiateExit_StartsCountdown() public {
@@ -76,47 +75,42 @@ contract StakingTest is Test {
         staking.stake(100 * ONE);
 
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
 
-        (, uint256 exitInitiatedAt) = staking.deposits(alice);
-        assertEq(exitInitiatedAt, block.timestamp);
+        assertEq(staking.exitQueueLength(alice), 1);
+        (, uint256 ts) = staking.exitRequestAt(alice, 0);
+        assertEq(ts, block.timestamp);
     }
 
     function test_InitiateExit_NothingStakedReverts() public {
         vm.prank(alice);
         vm.expectRevert(Staking.NothingToInitiate.selector);
-        staking.initiateExit();
+        staking.initiateExit(1);
     }
 
-    function test_InitiateExit_Idempotent() public {
+    function test_InitiateExit_AmountExceedsReverts() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
         vm.prank(alice);
         staking.stake(100 * ONE);
 
         vm.prank(alice);
-        staking.initiateExit();
-        uint256 first = block.timestamp;
-        vm.warp(block.timestamp + 100);
-        vm.prank(alice);
-        staking.initiateExit(); // second call does nothing, timestamp unchanged
-        (, uint256 exitInitiatedAt) = staking.deposits(alice);
-        assertEq(exitInitiatedAt, first);
+        vm.expectRevert(Staking.AmountExceedsStake.selector);
+        staking.initiateExit(101 * ONE);
     }
 
-    function test_CancelExit_ResetsCountdown() public {
+    function test_CancelExit_ResetsQueue() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
 
         vm.prank(alice);
-        staking.cancelExit();
+        staking.cancelExit(0);
 
-        (, uint256 exitInitiatedAt) = staking.deposits(alice);
-        assertEq(exitInitiatedAt, 0);
+        assertEq(staking.exitQueueLength(alice), 0);
     }
 
     function test_CancelExit_NotInitiatedReverts() public {
@@ -126,8 +120,8 @@ contract StakingTest is Test {
         staking.stake(100 * ONE);
 
         vm.prank(alice);
-        vm.expectRevert(Staking.ExitNotInitiatedToCancel.selector);
-        staking.cancelExit();
+        vm.expectRevert(Staking.InvalidExitIndex.selector);
+        staking.cancelExit(0);
     }
 
     function test_Exit_WithoutInitiateReverts() public {
@@ -138,8 +132,8 @@ contract StakingTest is Test {
 
         vm.warp(block.timestamp + LOCK_DURATION);
         vm.prank(alice);
-        vm.expectRevert(Staking.ExitNotInitiated.selector);
-        staking.exit();
+        vm.expectRevert(Staking.InvalidExitIndex.selector);
+        staking.exit(0);
     }
 
     function test_Exit_BeforeLockReverts() public {
@@ -148,12 +142,12 @@ contract StakingTest is Test {
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
 
         vm.warp(block.timestamp + LOCK_DURATION - 1);
         vm.prank(alice);
         vm.expectRevert(Staking.Locked.selector);
-        staking.exit();
+        staking.exit(0);
     }
 
     function test_Exit_AfterLockSuccess() public {
@@ -162,16 +156,16 @@ contract StakingTest is Test {
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
 
         vm.warp(block.timestamp + LOCK_DURATION);
         uint256 aliceBefore = k613.balanceOf(alice);
         vm.prank(alice);
-        staking.exit();
+        staking.exit(0);
 
         (uint256 amount,) = staking.deposits(alice);
         assertEq(amount, 0);
-        assertEq(xk613.balanceOf(alice), 0);
+        assertEq(distributor.balanceOf(alice), 0);
         assertEq(k613.balanceOf(alice), aliceBefore + 100 * ONE);
     }
 
@@ -181,12 +175,12 @@ contract StakingTest is Test {
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
 
         uint256 before = k613.balanceOf(alice);
-        vm.warp(block.timestamp + LOCK_DURATION); // exactly at boundary
+        vm.warp(block.timestamp + LOCK_DURATION);
         vm.prank(alice);
-        staking.exit();
+        staking.exit(0);
         assertEq(k613.balanceOf(alice), before + 100 * ONE);
     }
 
@@ -197,8 +191,8 @@ contract StakingTest is Test {
         staking.stake(100 * ONE);
 
         vm.prank(alice);
-        vm.expectRevert(Staking.ExitNotInitiated.selector);
-        staking.instantExit(100 * ONE);
+        vm.expectRevert(Staking.InvalidExitIndex.selector);
+        staking.instantExit(0);
     }
 
     function test_InstantExit_AfterLockReverts() public {
@@ -207,12 +201,12 @@ contract StakingTest is Test {
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
 
         vm.warp(block.timestamp + LOCK_DURATION);
         vm.prank(alice);
         vm.expectRevert(Staking.Unlocked.selector);
-        staking.instantExit(100 * ONE);
+        staking.instantExit(0);
     }
 
     function test_InstantExit_PenaltyToDistributor() public {
@@ -221,32 +215,32 @@ contract StakingTest is Test {
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
 
-        vm.warp(block.timestamp + 1 days); // before lock
+        vm.warp(block.timestamp + 1 days);
         uint256 aliceBefore = k613.balanceOf(alice);
         vm.prank(alice);
-        staking.instantExit(100 * ONE);
+        staking.instantExit(0);
 
         uint256 penalty = (100 * ONE * PENALTY_BPS) / 10_000;
         uint256 payout = 100 * ONE - penalty;
 
         assertEq(k613.balanceOf(alice), aliceBefore + payout);
-        assertEq(xk613.balanceOf(address(distributor)), penalty);
+        assertEq(distributor.exitPending(alice), 0);
     }
 
-    function test_InstantExit_PartialAmount() public {
+    function test_InstantExit_PartialRequest() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(40 * ONE);
 
         uint256 before = k613.balanceOf(alice);
         vm.warp(block.timestamp + 1 days);
         vm.prank(alice);
-        staking.instantExit(40 * ONE);
+        staking.instantExit(0);
 
         (uint256 amount,) = staking.deposits(alice);
         assertEq(amount, 60 * ONE);
@@ -255,47 +249,21 @@ contract StakingTest is Test {
         assertEq(k613.balanceOf(alice), before + payout);
     }
 
-    function test_InstantExit_FullAmountClearsExitInitiated() public {
+    function test_InstantExit_FullClearsQueue() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
 
         vm.warp(block.timestamp + 1 days);
         vm.prank(alice);
-        staking.instantExit(100 * ONE);
-
-        (uint256 amount, uint256 exitInitiatedAt) = staking.deposits(alice);
-        assertEq(amount, 0);
-        assertEq(exitInitiatedAt, 0);
-    }
-
-    function test_InstantExit_ZeroReverts() public {
-        vm.prank(alice);
-        k613.approve(address(staking), 100 * ONE);
-        vm.prank(alice);
-        staking.stake(100 * ONE);
-        vm.prank(alice);
-        staking.initiateExit();
-
-        vm.prank(alice);
-        vm.expectRevert(Staking.ZeroAmount.selector);
         staking.instantExit(0);
-    }
 
-    function test_InstantExit_InsufficientBalanceReverts() public {
-        vm.prank(alice);
-        k613.approve(address(staking), 100 * ONE);
-        vm.prank(alice);
-        staking.stake(100 * ONE);
-        vm.prank(alice);
-        staking.initiateExit();
-
-        vm.prank(alice);
-        vm.expectRevert(Staking.InsufficientBalance.selector);
-        staking.instantExit(101 * ONE);
+        (uint256 amount,) = staking.deposits(alice);
+        assertEq(amount, 0);
+        assertEq(staking.exitQueueLength(alice), 0);
     }
 
     function test_StakeAfterCancelExit() public {
@@ -304,16 +272,16 @@ contract StakingTest is Test {
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
         vm.prank(alice);
-        staking.cancelExit();
+        staking.cancelExit(0);
 
         vm.prank(alice);
         staking.stake(50 * ONE);
 
-        (uint256 amount, uint256 exitInitiatedAt) = staking.deposits(alice);
+        (uint256 amount,) = staking.deposits(alice);
         assertEq(amount, 150 * ONE);
-        assertEq(exitInitiatedAt, 0);
+        assertEq(staking.exitQueueLength(alice), 0);
     }
 
     function test_ExitAfterCancelAndReinitiate() public {
@@ -322,17 +290,44 @@ contract StakingTest is Test {
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
         vm.prank(alice);
-        staking.cancelExit();
+        staking.cancelExit(0);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
 
         uint256 before = k613.balanceOf(alice);
         vm.warp(block.timestamp + LOCK_DURATION);
         vm.prank(alice);
-        staking.exit();
+        staking.exit(0);
         assertEq(k613.balanceOf(alice), before + 100 * ONE);
+    }
+
+    function test_ExitQueue_MultipleRequests() public {
+        vm.prank(alice);
+        k613.approve(address(staking), 200 * ONE);
+        vm.prank(alice);
+        staking.stake(100 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(30 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(20 * ONE);
+
+        assertEq(staking.exitQueueLength(alice), 2);
+        (uint256 a0,) = staking.exitRequestAt(alice, 0);
+        (uint256 a1,) = staking.exitRequestAt(alice, 1);
+        assertEq(a0, 30 * ONE);
+        assertEq(a1, 20 * ONE);
+
+        vm.warp(block.timestamp + LOCK_DURATION);
+        vm.prank(alice);
+        staking.exit(0);
+        assertEq(staking.exitQueueLength(alice), 1);
+        vm.prank(alice);
+        staking.exit(0);
+        assertEq(staking.exitQueueLength(alice), 0);
+        (uint256 amount,) = staking.deposits(alice);
+        assertEq(amount, 50 * ONE);
     }
 
     function test_Pause_BlocksStake() public {
@@ -351,13 +346,13 @@ contract StakingTest is Test {
         vm.prank(alice);
         staking.stake(100 * ONE);
         vm.prank(alice);
-        staking.initiateExit();
+        staking.initiateExit(100 * ONE);
         vm.warp(block.timestamp + LOCK_DURATION);
 
         staking.pause();
 
         vm.prank(alice);
         vm.expectRevert();
-        staking.exit();
+        staking.exit(0);
     }
 }

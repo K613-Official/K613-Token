@@ -19,11 +19,11 @@ contract RewardsDistributorTest is Test {
         token = new xK613(address(this));
         distributor = new RewardsDistributor(address(token));
         distributor.setStaking(address(this));
-        token.setRewardsDistributor(address(distributor));
         token.setTransferWhitelist(address(distributor), true);
 
-        token.mint(alice, 1_000 * ONE);
-        token.mint(bob, 1_000 * ONE);
+        token.mint(address(distributor), 2_000 * ONE);
+        distributor.depositFor(alice, 1_000 * ONE);
+        distributor.depositFor(bob, 1_000 * ONE);
     }
 
     function testConstructorRevertsOnZero() public {
@@ -56,7 +56,7 @@ contract RewardsDistributorTest is Test {
         distributor.claim();
         uint256 aliceAfter = token.balanceOf(alice);
 
-        uint256 aliceShare = (1_000 * ONE * 10 * ONE) / (2_000 * ONE + 10 * ONE);
+        uint256 aliceShare = (1_000 * ONE * 10 * ONE) / (2_000 * ONE);
         assertApproxEqAbs(aliceAfter - aliceBefore, aliceShare, 1000);
         assertEq(distributor.pendingRewards(), 0);
     }
@@ -68,16 +68,16 @@ contract RewardsDistributorTest is Test {
         vm.prank(alice);
         distributor.claim();
 
-        uint256 aliceShare = (1_000 * ONE * 10 * ONE) / (2_000 * ONE + 10 * ONE);
-        assertApproxEqAbs(token.balanceOf(alice), 1_000 * ONE + aliceShare, 1000);
-        assertEq(distributor.userPendingRewards(alice), 0);
+        uint256 aliceShare = (1_000 * ONE * 10 * ONE) / (2_000 * ONE);
+        assertApproxEqAbs(token.balanceOf(alice), aliceShare, 1000);
+        assertEq(distributor.pendingRewardsOf(alice), 0);
     }
 
     function testPendingRewardsOf() public {
         token.mint(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
 
-        uint256 aliceShare = (1_000 * ONE * 10 * ONE) / (2_000 * ONE + 10 * ONE);
+        uint256 aliceShare = (1_000 * ONE * 10 * ONE) / (2_000 * ONE);
         assertApproxEqAbs(distributor.pendingRewardsOf(alice), aliceShare, 1000);
         assertApproxEqAbs(distributor.pendingRewardsOf(bob), aliceShare, 1000);
     }

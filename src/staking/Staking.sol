@@ -11,89 +11,86 @@ import {xK613} from "../token/xK613.sol";
 import {RewardsDistributor} from "./RewardsDistributor.sol";
 
 /// @title Staking
-/// @notice Shadow xShadow-style staking: deposit K613, lock for duration, receive xK613. Exit after lock or instant-exit with penalty.
-/// @dev Simplified from Shadow (shadow.so/xshadow), no x33. Lock is fixed per deposit.
-///      Penalty from instant exit goes to RewardsDistributor as xK613 for stakers.
-/// @custom:source Adapted from Shadow xShadow (lib/shadow-core/contracts/xShadow/XShadow.sol)
+/// @notice Deposit K613 to earn rewards via xK613 in `RewardsDistributor` with an exit queue and optional instant-exit penalty.
 contract Staking is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    /// @notice Thrown when a zero address is passed as a parameter.
-    error ZeroAddress();
-    /// @notice Thrown when amount is zero where a positive value is required.
-    error ZeroAmount();
-    /// @notice Thrown when exit is attempted before the lock period has ended.
-    error Locked();
-    /// @notice Thrown when instantExit is called but the stake is already unlocked (use exit instead).
-    error Unlocked();
-    /// @notice Thrown when instant exit penalty exceeds 10000 bps.
-    error InvalidBps();
-    /// @notice Thrown when user has insufficient staked balance.
-    error InsufficientBalance();
-    /// @notice Thrown when instantExit is called but RewardsDistributor is not set.
-    error RewardsDistributorNotSet();
-    /// @notice Thrown when exit or instantExit is called but user has not initiated exit.
-    error ExitNotInitiated();
-    /// @notice Thrown when initiateExit is called but user has nothing staked.
-    error NothingToInitiate();
-    /// @notice Thrown when cancelExit is called but exit was not initiated.
-    error ExitNotInitiatedToCancel();
+    uint256 public constant MAX_EXIT_REQUESTS = 10;
 
-    /// @notice Represents a user's staked position.
-    struct Deposit {
+    error ZeroAddress();
+    error ZeroAmount();
+    error Locked();
+    error Unlocked();
+    error InvalidBps();
+    error RewardsDistributorNotSet();
+    error NothingToInitiate();
+    error InvalidExitIndex();
+    error ExitQueueFull();
+    error AmountExceedsStake();
+
+    struct ExitRequest {
         uint256 amount;
-        uint256 exitInitiatedAt; // 0 = not initiated; >0 = lock countdown started at this timestamp
+        uint256 exitInitiatedAt;
+    }
+
+    struct UserState {
+        uint256 amount;
+        ExitRequest[] exitQueue;
     }
 
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    /// @notice Underlying token being staked.
     IERC20 public immutable k613;
+    /// @notice xK613 token minted on stake and burned on exit.
     xK613 public immutable xk613;
 
-    /// @notice Minimum time (seconds) a stake must remain locked before exit.
+    /// @notice Lock duration for standard exits.
     uint256 public immutable lockDuration;
-    /// @notice Penalty in basis points (1–10000) applied on instant exit before lock end.
+    /// @notice Penalty, in basis points, applied on instant exits before `lockDuration`.
     uint256 public immutable instantExitPenaltyBps;
 
+    /// @notice Rewards distributor that tracks xK613 deposits and distributes rewards.
     RewardsDistributor public rewardsDistributor;
-    mapping(address => Deposit) public deposits;
+    mapping(address => UserState) private _userState;
 
     /// @notice Emitted when a user stakes K613.
-    /// @param account Staker address.
-    /// @param amount Amount staked.
+    /// @param account Address of the user.
+    /// @param amount Amount of K613 staked.
     event Staked(address indexed account, uint256 amount);
-    /// @notice Emitted when a user initiates exit (starts lock countdown).
-    /// @param account User address.
-    /// @param exitInitiatedAt Timestamp when exit was initiated.
-    event ExitInitiated(address indexed account, uint256 exitInitiatedAt);
-    /// @notice Emitted when a user cancels initiated exit.
-    /// @param account User address.
-    event ExitCancelled(address indexed account);
-    /// @notice Emitted when a user exits after lock period.
-    /// @param account Exiter address.
-    /// @param amount Amount withdrawn.
-    event Exited(address indexed account, uint256 amount);
-    /// @notice Emitted when a user performs instant exit (before lock end).
-    /// @param account Exiter address.
-    /// @param amount Total amount exited.
-    /// @param penalty Penalty deducted and sent to RewardsDistributor.
-    event InstantExit(address indexed account, uint256 amount, uint256 penalty);
-    /// @notice Emitted when the RewardsDistributor address is updated.
-    /// @param distributor New RewardsDistributor address.
+    /// @notice Emitted when a user initiates an exit request.
+    /// @param account Address of the user.
+    /// @param index Index of the created exit request in the user's queue.
+    /// @param amount Amount requested to exit.
+    /// @param exitInitiatedAt Timestamp when the exit was initiated.
+    event ExitInitiated(address indexed account, uint256 index, uint256 amount, uint256 exitInitiatedAt);
+    /// @notice Emitted when a user cancels an exit request.
+    /// @param account Address of the user.
+    /// @param index Index of the cancelled exit request.
+    event ExitCancelled(address indexed account, uint256 index);
+    /// @notice Emitted when a user exits after the lock period.
+    /// @param account Address of the user.
+    /// @param index Index of the exit request that was executed.
+    /// @param amount Amount of K613 exited.
+    event Exited(address indexed account, uint256 index, uint256 amount);
+    /// @notice Emitted when a user performs an instant exit before the lock period.
+    /// @param account Address of the user.
+    /// @param index Index of the exit request that was executed.
+    /// @param amount Amount of K613 requested to exit.
+    /// @param penalty Amount of K613-equivalent paid as penalty.
+    event InstantExit(address indexed account, uint256 index, uint256 amount, uint256 penalty);
+    /// @notice Emitted when the rewards distributor address is updated.
+    /// @param distributor Address of the new rewards distributor.
     event RewardsDistributorUpdated(address indexed distributor);
 
-    /// @notice Deploys the Staking contract.
-    /// @param k613Token Address of the K613 token.
-    /// @param xk613Token Address of the xK613 token.
-    /// @param lockDuration_ Lock duration in seconds.
-    /// @param instantExitPenaltyBps_ Instant exit penalty in basis points (max 10000).
+    /// @notice Initializes the staking contract.
+    /// @param k613Token Address of the K613 token to be staked.
+    /// @param xk613Token Address of the xK613 token to be minted/burned on stake/exit.
+    /// @param lockDuration_ Lock duration, in seconds, for standard exits.
+    /// @param instantExitPenaltyBps_ Penalty in basis points for instant exits.
     constructor(address k613Token, address xk613Token, uint256 lockDuration_, uint256 instantExitPenaltyBps_) {
-        if (k613Token == address(0) || xk613Token == address(0)) {
-            revert ZeroAddress();
-        }
-        if (instantExitPenaltyBps_ > 10_000) {
-            revert InvalidBps();
-        }
+        if (k613Token == address(0) || xk613Token == address(0)) revert ZeroAddress();
+        if (instantExitPenaltyBps_ > 10_000) revert InvalidBps();
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(PAUSER_ROLE, msg.sender);
         k613 = IERC20(k613Token);
@@ -102,113 +99,180 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         instantExitPenaltyBps = instantExitPenaltyBps_;
     }
 
-    /// @notice Sets the RewardsDistributor used for instant exit penalties.
-    /// @param distributor Address of the RewardsDistributor contract.
+    /// @notice Sets the rewards distributor contract.
+    /// @param distributor Address of the rewards distributor.
     function setRewardsDistributor(address distributor) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (distributor == address(0)) {
-            revert ZeroAddress();
-        }
+        if (distributor == address(0)) revert ZeroAddress();
         rewardsDistributor = RewardsDistributor(distributor);
         emit RewardsDistributorUpdated(distributor);
     }
 
-    /// @notice Stakes K613 and mints xK613 to the caller.
+    /// @notice Returns the total deposited amount and exit queue for a user.
+    /// @param user Address of the user.
+    /// @return amount Total staked K613 amount for the user.
+    /// @return exitQueue Array of exit requests for the user.
+    function deposits(address user) external view returns (uint256 amount, ExitRequest[] memory exitQueue) {
+        UserState storage s = _userState[user];
+        amount = s.amount;
+        exitQueue = s.exitQueue;
+    }
+
+    /// @notice Returns the length of the exit queue for a user.
+    /// @param user Address of the user.
+    /// @return Length of the exit queue.
+    function exitQueueLength(address user) external view returns (uint256) {
+        return _userState[user].exitQueue.length;
+    }
+
+    /// @notice Returns data for a specific exit request in a user's queue.
+    /// @param user Address of the user.
+    /// @param index Index of the exit request.
+    /// @return amount Amount requested to exit.
+    /// @return exitInitiatedAt Timestamp when the exit was initiated.
+    function exitRequestAt(address user, uint256 index)
+        external
+        view
+        returns (uint256 amount, uint256 exitInitiatedAt)
+    {
+        ExitRequest storage r = _userState[user].exitQueue[index];
+        return (r.amount, r.exitInitiatedAt);
+    }
+
+    /// @notice Computes the sum of all amounts pending exit for a user.
+    /// @param user Address of the user.
+    /// @return sum Total amount pending exit across the user's queue.
+    function _exitPendingSum(address user) internal view returns (uint256 sum) {
+        ExitRequest[] storage q = _userState[user].exitQueue;
+        for (uint256 i = 0; i < q.length; i++) {
+            sum += q[i].amount;
+        }
+    }
+
+    /// @notice Stakes K613 and credits the user in `RewardsDistributor`.
     /// @param amount Amount of K613 to stake.
     function stake(uint256 amount) external nonReentrant whenNotPaused {
-        if (amount == 0) {
-            revert ZeroAmount();
-        }
-        Deposit storage info = deposits[msg.sender];
-        info.amount += amount;
+        if (amount == 0) revert ZeroAmount();
+        if (address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
+
+        UserState storage s = _userState[msg.sender];
+        s.amount += amount;
+
         k613.safeTransferFrom(msg.sender, address(this), amount);
-        xk613.mint(msg.sender, amount);
+        xk613.mint(address(rewardsDistributor), amount);
+        rewardsDistributor.depositFor(msg.sender, amount);
+
         emit Staked(msg.sender, amount);
     }
 
-    /// @notice Initiates exit process. Starts lock countdown. User can cancel before lock ends.
-    function initiateExit() external nonReentrant whenNotPaused {
-        Deposit storage info = deposits[msg.sender];
-        if (info.amount == 0) {
-            revert NothingToInitiate();
-        }
-        if (info.exitInitiatedAt != 0) {
-            return; // Already initiated
-        }
-        info.exitInitiatedAt = block.timestamp;
-        emit ExitInitiated(msg.sender, block.timestamp);
+    /// @notice Initiates exit for a given amount and appends it to the user's exit queue.
+    /// @dev A user can have at most `MAX_EXIT_REQUESTS` active exit requests.
+    /// @param amount Amount of K613 to schedule for exit.
+    function initiateExit(uint256 amount) external nonReentrant whenNotPaused {
+        if (amount == 0) revert ZeroAmount();
+        if (address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
+
+        UserState storage s = _userState[msg.sender];
+        uint256 inQueue = _exitPendingSum(msg.sender);
+        if (s.amount <= inQueue) revert NothingToInitiate();
+        if (amount > s.amount - inQueue) revert AmountExceedsStake();
+        if (s.exitQueue.length >= MAX_EXIT_REQUESTS) revert ExitQueueFull();
+
+        s.exitQueue.push(ExitRequest({amount: amount, exitInitiatedAt: block.timestamp}));
+        rewardsDistributor.addExitPending(msg.sender, amount);
+
+        emit ExitInitiated(msg.sender, s.exitQueue.length - 1, amount, block.timestamp);
     }
 
-    /// @notice Cancels initiated exit. Resets exit countdown.
-    function cancelExit() external nonReentrant whenNotPaused {
-        Deposit storage info = deposits[msg.sender];
-        if (info.exitInitiatedAt == 0) {
-            revert ExitNotInitiatedToCancel();
-        }
-        info.exitInitiatedAt = 0;
-        emit ExitCancelled(msg.sender);
+    /// @notice Cancels an exit request at a given index.
+    /// @param index Index of the exit request in the caller's queue.
+    function cancelExit(uint256 index) external nonReentrant whenNotPaused {
+        if (address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
+
+        UserState storage s = _userState[msg.sender];
+        if (index >= s.exitQueue.length) revert InvalidExitIndex();
+
+        uint256 amount = s.exitQueue[index].amount;
+        _removeExitRequest(msg.sender, index);
+        rewardsDistributor.removeExitPending(msg.sender, amount);
+
+        emit ExitCancelled(msg.sender, index);
     }
 
-    /// @notice Exits staked position after lock period. Burns xK613 and returns K613.
-    /// @dev Requires exit to be initiated first via initiateExit().
-    function exit() external nonReentrant whenNotPaused {
-        Deposit storage info = deposits[msg.sender];
-        uint256 amount = info.amount;
-        if (amount == 0) {
-            revert InsufficientBalance();
-        }
-        if (info.exitInitiatedAt == 0) {
-            revert ExitNotInitiated();
-        }
-        if (block.timestamp < info.exitInitiatedAt + lockDuration) {
-            revert Locked();
-        }
-        delete deposits[msg.sender];
-        xk613.burnFrom(msg.sender, amount);
+    /// @notice Executes an exit after the lock period has passed.
+    /// @dev Burns the corresponding xK613 and transfers K613 to the caller.
+    /// @param index Index of the exit request in the caller's queue.
+    function exit(uint256 index) external nonReentrant whenNotPaused {
+        if (address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
+
+        UserState storage s = _userState[msg.sender];
+        if (index >= s.exitQueue.length) revert InvalidExitIndex();
+
+        ExitRequest storage req = s.exitQueue[index];
+        if (block.timestamp < req.exitInitiatedAt + lockDuration) revert Locked();
+
+        uint256 amount = req.amount;
+        _removeExitRequest(msg.sender, index);
+        s.amount -= amount;
+
+        rewardsDistributor.removeExitPending(msg.sender, amount);
+        rewardsDistributor.withdrawFor(msg.sender, amount);
+        xk613.burnFrom(address(this), amount);
         k613.safeTransfer(msg.sender, amount);
-        emit Exited(msg.sender, amount);
+
+        emit Exited(msg.sender, index, amount);
     }
 
-    /// @notice Exits before lock end with penalty. Penalty is sent to RewardsDistributor.
-    /// @dev Requires exit to be initiated first via initiateExit().
-    /// @param amount Amount of K613 (staked) to exit.
-    function instantExit(uint256 amount) external nonReentrant whenNotPaused {
-        if (amount == 0) {
-            revert ZeroAmount();
-        }
-        Deposit storage info = deposits[msg.sender];
-        if (info.amount < amount) {
-            revert InsufficientBalance();
-        }
-        if (info.exitInitiatedAt == 0) {
-            revert ExitNotInitiated();
-        }
-        if (block.timestamp >= info.exitInitiatedAt + lockDuration) {
-            revert Unlocked();
-        }
-        if (address(rewardsDistributor) == address(0)) {
-            revert RewardsDistributorNotSet();
-        }
-        info.amount -= amount;
-        if (info.amount == 0) {
-            info.exitInitiatedAt = 0;
-        }
+    /// @notice Performs an instant exit before the lock period, applying a penalty.
+    /// @dev The penalty is minted as xK613 to the rewards distributor and distributed as additional rewards.
+    /// @param index Index of the exit request in the caller's queue.
+    function instantExit(uint256 index) external nonReentrant whenNotPaused {
+        if (address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
+
+        UserState storage s = _userState[msg.sender];
+        if (index >= s.exitQueue.length) revert InvalidExitIndex();
+
+        ExitRequest storage req = s.exitQueue[index];
+        if (block.timestamp >= req.exitInitiatedAt + lockDuration) revert Unlocked();
+
+        uint256 amount = req.amount;
         uint256 penalty = (amount * instantExitPenaltyBps) / 10_000;
         uint256 payout = amount - penalty;
-        xk613.burnFrom(msg.sender, amount);
+
+        _removeExitRequest(msg.sender, index);
+        s.amount -= amount;
+
+        rewardsDistributor.removeExitPending(msg.sender, amount);
+        rewardsDistributor.withdrawFor(msg.sender, amount);
+        xk613.burnFrom(address(this), amount);
         if (penalty > 0) {
             xk613.mint(address(rewardsDistributor), penalty);
             rewardsDistributor.notifyReward(penalty);
         }
         k613.safeTransfer(msg.sender, payout);
-        emit InstantExit(msg.sender, amount, penalty);
+
+        emit InstantExit(msg.sender, index, amount, penalty);
     }
 
-    /// @notice Pauses staking operations. Only callable by PAUSER_ROLE.
+    /// @notice Removes an exit request from a user's queue by index.
+    /// @dev Swaps with the last element and pops to keep the array compact.
+    /// @param user Address of the user.
+    /// @param index Index of the exit request to remove.
+    function _removeExitRequest(address user, uint256 index) internal {
+        UserState storage s = _userState[user];
+        uint256 last = s.exitQueue.length - 1;
+        if (index != last) {
+            s.exitQueue[index] = s.exitQueue[last];
+        }
+        s.exitQueue.pop();
+    }
+
+    /// @notice Pauses staking and exit operations.
+    /// @dev Functions guarded by `whenNotPaused` will revert while the contract is paused.
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
 
-    /// @notice Resumes staking operations. Only callable by PAUSER_ROLE.
+    /// @notice Unpauses staking and exit operations.
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }
