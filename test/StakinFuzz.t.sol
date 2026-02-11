@@ -47,7 +47,7 @@ contract StakingFuzzTest is Test {
         (uint256 deposited,) = staking.deposits(user);
         assertEq(deposited, amount);
         assertEq(k613.balanceOf(address(staking)), amount);
-        assertEq(distributor.balanceOf(user), amount);
+        assertEq(xk613.balanceOf(user), amount);
     }
 
     function testFuzzExit(uint256 rawAmount, address user) public {
@@ -60,6 +60,7 @@ contract StakingFuzzTest is Test {
         vm.startPrank(user);
         k613.approve(address(staking), amount);
         staking.stake(amount);
+        xk613.approve(address(staking), amount);
         staking.initiateExit(amount);
         vm.stopPrank();
 
@@ -69,7 +70,6 @@ contract StakingFuzzTest is Test {
 
         (uint256 deposited,) = staking.deposits(user);
         assertEq(deposited, 0);
-        assertEq(distributor.balanceOf(user), 0);
         assertEq(k613.balanceOf(user), amount);
         assertEq(k613.balanceOf(address(staking)), 0);
     }
@@ -84,6 +84,7 @@ contract StakingFuzzTest is Test {
         vm.startPrank(user);
         k613.approve(address(staking), amount);
         staking.stake(amount);
+        xk613.approve(address(staking), amount);
         staking.initiateExit(amount);
         vm.stopPrank();
 
@@ -96,7 +97,6 @@ contract StakingFuzzTest is Test {
 
         (uint256 deposited,) = staking.deposits(user);
         assertEq(deposited, 0);
-        assertEq(distributor.balanceOf(user), 0);
         assertEq(k613.balanceOf(user), payout);
     }
 }

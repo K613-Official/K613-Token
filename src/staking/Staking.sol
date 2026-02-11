@@ -10,8 +10,59 @@ import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/Safe
 import {xK613} from "../token/xK613.sol";
 import {RewardsDistributor} from "./RewardsDistributor.sol";
 
-/// @title Staking
-/// @notice Deposit K613 to earn rewards via xK613 in `RewardsDistributor` with an exit queue and optional instant-exit penalty.
+/**
+ * @title K613 Staking
+ * @author K613
+ *
+ * @notice
+ * Shadow (xSHADOW)-inspired staking contract implementing a 1:1 conversion
+ * between K613 and xK613 with an explicit exit queue and optional instant exit
+ * penalty mechanism.
+ *
+ * @dev
+ * DESIGN OVERVIEW
+ * ---------------
+ * This contract intentionally borrows the economic pattern of Shadow's xToken
+ * staking model (receipt token + exit mechanics), while significantly reducing
+ * system complexity and attack surface.
+ *
+ * Core principles:
+ * - xK613 is a passive receipt token minted 1:1 on stake and burned on exit.
+ * - No rebasing, governance, voting, or vesting logic is included.
+ * - Rewards distribution is fully decoupled and handled externally via
+ *   RewardsDistributor.
+ *
+ * SHADOW-INSPIRED ELEMENTS
+ * -----------------------
+ * - Receipt-token based staking (K613 → xK613).
+ * - Exit delay enforced via an exit queue.
+ * - Optional early exit with penalty (basis-points based).
+ *
+ * INTENTIONAL DIFFERENCES FROM SHADOW
+ * ----------------------------------
+ * - No automatic reward accrual or rebasing.
+ * - No epoch-based accounting.
+ * - No governance or voting power coupling.
+ * - Exit requests escrow xK613 inside this contract, ensuring strict
+ *   accounting and preventing double exits.
+ *
+ * SECURITY RATIONALE
+ * ------------------
+ * - Explicit state tracking via UserState prevents balance desynchronization.
+ * - xK613 is transferred to this contract during exit requests and burned on exit,
+ *   eliminating reliance on user balances at execution time.
+ * - All external token transfers use SafeERC20.
+ * - ReentrancyGuard is applied to all state-mutating user flows.
+ *
+ * ECONOMIC NOTES
+ * --------------
+ * - Instant exit penalties (if enabled) are minted as xK613 and sent to the
+ *   RewardsDistributor, increasing future reward weight for remaining stakers.
+ * - Underlying K613 principal is never implicitly redistributed.
+ *
+ * This design preserves proven economic incentives from Shadow while favoring
+ * auditability, explicit user intent, and minimal cross-contract coupling.
+ */
 contract Staking is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -23,6 +74,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     error Unlocked();
     error InvalidBps();
     error RewardsDistributorNotSet();
+    error InsufficientxK613();
     error NothingToInitiate();
     error InvalidExitIndex();
     error ExitQueueFull();
@@ -50,38 +102,26 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     /// @notice Penalty, in basis points, applied on instant exits before `lockDuration`.
     uint256 public immutable instantExitPenaltyBps;
 
-    /// @notice Rewards distributor that tracks xK613 deposits and distributes rewards.
+    /// @notice Rewards distributor responsible for external reward accounting.
     RewardsDistributor public rewardsDistributor;
     mapping(address => UserState) private _userState;
+    /// @notice Total K613 backing active positions (staked minus exited).
+    uint256 private _totalBacking;
 
     /// @notice Emitted when a user stakes K613.
-    /// @param account Address of the user.
-    /// @param amount Amount of K613 staked.
     event Staked(address indexed account, uint256 amount);
     /// @notice Emitted when a user initiates an exit request.
-    /// @param account Address of the user.
-    /// @param index Index of the created exit request in the user's queue.
-    /// @param amount Amount requested to exit.
-    /// @param exitInitiatedAt Timestamp when the exit was initiated.
     event ExitInitiated(address indexed account, uint256 index, uint256 amount, uint256 exitInitiatedAt);
     /// @notice Emitted when a user cancels an exit request.
-    /// @param account Address of the user.
-    /// @param index Index of the cancelled exit request.
     event ExitCancelled(address indexed account, uint256 index);
     /// @notice Emitted when a user exits after the lock period.
-    /// @param account Address of the user.
-    /// @param index Index of the exit request that was executed.
-    /// @param amount Amount of K613 exited.
     event Exited(address indexed account, uint256 index, uint256 amount);
-    /// @notice Emitted when a user performs an instant exit before the lock period.
-    /// @param account Address of the user.
-    /// @param index Index of the exit request that was executed.
-    /// @param amount Amount of K613 requested to exit.
-    /// @param penalty Amount of K613-equivalent paid as penalty.
+    /// @notice Emitted when a user performs an instant exit.
     event InstantExit(address indexed account, uint256 index, uint256 amount, uint256 penalty);
-    /// @notice Emitted when the rewards distributor address is updated.
-    /// @param distributor Address of the new rewards distributor.
+    /// @notice Emitted when rewards distributor is updated.
     event RewardsDistributorUpdated(address indexed distributor);
+    /// @notice Emitted when penalty K613 is withdrawn.
+    event PenaltiesWithdrawn(address indexed to, uint256 amount);
 
     /// @notice Initializes the staking contract.
     /// @param k613Token Address of the K613 token to be staked.
@@ -148,62 +188,57 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         }
     }
 
-    /// @notice Stakes K613 and credits the user in `RewardsDistributor`.
-    /// @param amount Amount of K613 to stake.
+    /// @notice Converts K613 to xK613 1:1 and mints to caller (XShadow-style).
+    /// @param amount Amount of K613 to convert.
     function stake(uint256 amount) external nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
-        if (address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
 
         UserState storage s = _userState[msg.sender];
         s.amount += amount;
+        _totalBacking += amount;
 
         k613.safeTransferFrom(msg.sender, address(this), amount);
-        xk613.mint(address(rewardsDistributor), amount);
-        rewardsDistributor.depositFor(msg.sender, amount);
+        xk613.mint(msg.sender, amount);
 
         emit Staked(msg.sender, amount);
     }
 
-    /// @notice Initiates exit for a given amount and appends it to the user's exit queue.
-    /// @dev A user can have at most `MAX_EXIT_REQUESTS` active exit requests.
-    /// @param amount Amount of K613 to schedule for exit.
+    /// @notice Initiates exit: pulls xK613 from caller and adds request to queue.
+    /// @dev Caller must approve Staking for xK613. At most `MAX_EXIT_REQUESTS` per user.
+    /// @param amount Amount of xK613 to schedule for exit.
     function initiateExit(uint256 amount) external nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
-        if (address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
 
         UserState storage s = _userState[msg.sender];
         uint256 inQueue = _exitPendingSum(msg.sender);
         if (s.amount <= inQueue) revert NothingToInitiate();
         if (amount > s.amount - inQueue) revert AmountExceedsStake();
+        // aderyn-ignore-next-line(reentrancy-state-change)
+        if (xk613.balanceOf(msg.sender) < amount) revert InsufficientxK613();
         if (s.exitQueue.length >= MAX_EXIT_REQUESTS) revert ExitQueueFull();
-
         s.exitQueue.push(ExitRequest({amount: amount, exitInitiatedAt: block.timestamp}));
-        rewardsDistributor.addExitPending(msg.sender, amount);
+        IERC20(address(xk613)).safeTransferFrom(msg.sender, address(this), amount);
+       
 
         emit ExitInitiated(msg.sender, s.exitQueue.length - 1, amount, block.timestamp);
     }
 
-    /// @notice Cancels an exit request at a given index.
+    /// @notice Cancels an exit request and returns xK613 to caller.
     /// @param index Index of the exit request in the caller's queue.
     function cancelExit(uint256 index) external nonReentrant whenNotPaused {
-        if (address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
-
         UserState storage s = _userState[msg.sender];
         if (index >= s.exitQueue.length) revert InvalidExitIndex();
 
         uint256 amount = s.exitQueue[index].amount;
         _removeExitRequest(msg.sender, index);
-        rewardsDistributor.removeExitPending(msg.sender, amount);
+        IERC20(address(xk613)).safeTransfer(msg.sender, amount);
 
         emit ExitCancelled(msg.sender, index);
     }
 
-    /// @notice Executes an exit after the lock period has passed.
-    /// @dev Burns the corresponding xK613 and transfers K613 to the caller.
+    /// @notice Executes an exit after the lock period: burns held xK613 and transfers K613 to caller.
     /// @param index Index of the exit request in the caller's queue.
     function exit(uint256 index) external nonReentrant whenNotPaused {
-        if (address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
-
         UserState storage s = _userState[msg.sender];
         if (index >= s.exitQueue.length) revert InvalidExitIndex();
 
@@ -213,21 +248,18 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         uint256 amount = req.amount;
         _removeExitRequest(msg.sender, index);
         s.amount -= amount;
+        _totalBacking -= amount;
 
-        rewardsDistributor.removeExitPending(msg.sender, amount);
-        rewardsDistributor.withdrawFor(msg.sender, amount);
         xk613.burnFrom(address(this), amount);
         k613.safeTransfer(msg.sender, amount);
 
         emit Exited(msg.sender, index, amount);
     }
 
-    /// @notice Performs an instant exit before the lock period, applying a penalty.
-    /// @dev The penalty is minted as xK613 to the rewards distributor and distributed as additional rewards.
+    /// @notice Instant exit before lock period; penalty goes to RewardsDistributor if set.
+    /// @dev Requires rewardsDistributor when penalty > 0.
     /// @param index Index of the exit request in the caller's queue.
     function instantExit(uint256 index) external nonReentrant whenNotPaused {
-        if (address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
-
         UserState storage s = _userState[msg.sender];
         if (index >= s.exitQueue.length) revert InvalidExitIndex();
 
@@ -238,11 +270,12 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         uint256 penalty = (amount * instantExitPenaltyBps) / 10_000;
         uint256 payout = amount - penalty;
 
+        if (penalty > 0 && address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
+
         _removeExitRequest(msg.sender, index);
         s.amount -= amount;
+        _totalBacking -= amount;
 
-        rewardsDistributor.removeExitPending(msg.sender, amount);
-        rewardsDistributor.withdrawFor(msg.sender, amount);
         xk613.burnFrom(address(this), amount);
         if (penalty > 0) {
             xk613.mint(address(rewardsDistributor), penalty);
@@ -264,6 +297,24 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
             s.exitQueue[index] = s.exitQueue[last];
         }
         s.exitQueue.pop();
+    }
+
+    /// @notice Withdraws accumulated penalty K613 (from instant exits) to a recipient.
+    /// @dev Only callable by DEFAULT_ADMIN_ROLE. Withdrawable = k613 balance minus total backing.
+    /// @param to Recipient address.
+    function withdrawPenalties(address to) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (to == address(0)) revert ZeroAddress();
+        uint256 balance = k613.balanceOf(address(this));
+        if (balance <= _totalBacking) return;
+        uint256 amount = balance - _totalBacking;
+        k613.safeTransfer(to, amount);
+        emit PenaltiesWithdrawn(to, amount);
+    }
+
+    /// @notice Returns the amount of penalty K613 available for withdrawal.
+    function withdrawablePenalties() external view returns (uint256) {
+        uint256 balance = k613.balanceOf(address(this));
+        return balance > _totalBacking ? balance - _totalBacking : 0;
     }
 
     /// @notice Pauses staking and exit operations.

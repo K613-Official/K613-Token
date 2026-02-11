@@ -46,6 +46,18 @@ contract StakingHandler is Test {
         vm.stopPrank();
     }
 
+    function depositToRD(uint256 rawAmount, uint256 actorSeed) external {
+        address actor = actors[actorSeed % actors.length];
+        uint256 balance = xk613.balanceOf(actor);
+        if (balance == 0) return;
+        uint256 amount = bound(rawAmount, 1, balance);
+
+        vm.startPrank(actor);
+        xk613.approve(address(distributor), amount);
+        distributor.deposit(amount);
+        vm.stopPrank();
+    }
+
     function initiateExit(uint256 rawAmount, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
         (uint256 deposited,) = staking.deposits(actor);
@@ -59,9 +71,12 @@ contract StakingHandler is Test {
         if (inQueue >= deposited) return;
         uint256 amount = bound(rawAmount, 1, deposited - inQueue);
         if (queueLen >= staking.MAX_EXIT_REQUESTS()) return;
+        if (xk613.balanceOf(actor) < amount) return;
 
-        vm.prank(actor);
+        vm.startPrank(actor);
+        xk613.approve(address(staking), amount);
         staking.initiateExit(amount);
+        vm.stopPrank();
     }
 
     function cancelExit(uint256 indexSeed, uint256 actorSeed) external {
@@ -104,9 +119,10 @@ contract StakingHandler is Test {
         staking.exit(index);
     }
 
+    /// @notice Claims rewards from RD if actor has deposits and no active exit.
     function rewardsClaim(uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
-        if (distributor.exitPending(actor) > 0) return;
+        if (staking.exitQueueLength(actor) > 0) return;
         if (distributor.pendingRewardsOf(actor) == 0) return;
         vm.prank(actor);
         distributor.claim();
@@ -158,7 +174,7 @@ contract InvariantStakingTest is StdInvariant, Test {
         assertGe(k613.balanceOf(address(staking)), totalDeposits);
     }
 
-    /// RD balance >= totalDeposits: instantExit mints penalty xK613 to RD, so balance can exceed totalDeposits
+    /// RD balance >= totalDeposits (penalties minted to RD can exceed deposits)
     function invariant_rdBalanceMatchesDeposits() public view {
         assertGe(xk613.balanceOf(address(distributor)), distributor.totalDeposits());
     }
