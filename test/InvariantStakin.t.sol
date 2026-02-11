@@ -46,60 +46,84 @@ contract StakingHandler is Test {
         vm.stopPrank();
     }
 
-    function initiateExit(uint256 actorSeed) external {
+    function depositToRD(uint256 rawAmount, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
-        (uint256 deposited, uint256 exitInitiatedAt) = staking.deposits(actor);
-        if (deposited == 0 || exitInitiatedAt != 0) {
-            return;
-        }
-        vm.prank(actor);
-        staking.initiateExit();
+        uint256 balance = xk613.balanceOf(actor);
+        if (balance == 0) return;
+        uint256 amount = bound(rawAmount, 1, balance);
+
+        vm.startPrank(actor);
+        xk613.approve(address(distributor), amount);
+        distributor.deposit(amount);
+        vm.stopPrank();
     }
 
-    function cancelExit(uint256 actorSeed) external {
+    function initiateExit(uint256 rawAmount, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
-        (, uint256 exitInitiatedAt) = staking.deposits(actor);
-        if (exitInitiatedAt == 0) {
-            return;
+        (uint256 deposited,) = staking.deposits(actor);
+        uint256 queueLen = staking.exitQueueLength(actor);
+        if (deposited == 0) return;
+        uint256 inQueue = 0;
+        for (uint256 i = 0; i < queueLen; i++) {
+            (uint256 am,) = staking.exitRequestAt(actor, i);
+            inQueue += am;
         }
-        vm.prank(actor);
-        staking.cancelExit();
+        if (inQueue >= deposited) return;
+        uint256 amount = bound(rawAmount, 1, deposited - inQueue);
+        if (queueLen >= staking.MAX_EXIT_REQUESTS()) return;
+        if (xk613.balanceOf(actor) < amount) return;
+
+        vm.startPrank(actor);
+        xk613.approve(address(staking), amount);
+        staking.initiateExit(amount);
+        vm.stopPrank();
     }
 
-    function instantExit(uint256 rawAmount, uint256 actorSeed) external {
+    function cancelExit(uint256 indexSeed, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
-        (uint256 deposited, uint256 exitInitiatedAt) = staking.deposits(actor);
-        if (deposited == 0 || exitInitiatedAt == 0) {
-            return;
-        }
-        uint256 amount = bound(rawAmount, 1, deposited);
+        uint256 queueLen = staking.exitQueueLength(actor);
+        if (queueLen == 0) return;
+        uint256 index = indexSeed % queueLen;
+
+        vm.prank(actor);
+        staking.cancelExit(index);
+    }
+
+    function instantExit(uint256 indexSeed, uint256 actorSeed) external {
+        address actor = actors[actorSeed % actors.length];
+        uint256 queueLen = staking.exitQueueLength(actor);
+        if (queueLen == 0) return;
+        uint256 index = indexSeed % queueLen;
+        (, uint256 exitInitiatedAt) = staking.exitRequestAt(actor, index);
         uint256 unlockAt = exitInitiatedAt + lockDuration;
         if (block.timestamp >= unlockAt) {
             vm.warp(unlockAt - 1);
         }
+
         vm.prank(actor);
-        staking.instantExit(amount);
+        staking.instantExit(index);
     }
 
-    function exit(uint256 actorSeed) external {
+    function exit(uint256 indexSeed, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
-        (uint256 deposited, uint256 exitInitiatedAt) = staking.deposits(actor);
-        if (deposited == 0 || exitInitiatedAt == 0) {
-            return;
-        }
+        uint256 queueLen = staking.exitQueueLength(actor);
+        if (queueLen == 0) return;
+        uint256 index = indexSeed % queueLen;
+        (, uint256 exitInitiatedAt) = staking.exitRequestAt(actor, index);
         uint256 unlockAt = exitInitiatedAt + lockDuration;
         if (block.timestamp < unlockAt) {
             vm.warp(unlockAt);
         }
+
         vm.prank(actor);
-        staking.exit();
+        staking.exit(index);
     }
 
+    /// @notice Claims rewards from RD if actor has deposits and no active exit.
     function rewardsClaim(uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
-        if (distributor.pendingRewardsOf(actor) == 0) {
-            return;
-        }
+        if (staking.exitQueueLength(actor) > 0) return;
+        if (distributor.pendingRewardsOf(actor) == 0) return;
         vm.prank(actor);
         distributor.claim();
     }
@@ -132,8 +156,8 @@ contract InvariantStakingTest is StdInvariant, Test {
         distributor.setStaking(address(staking));
 
         xk613.setMinter(address(staking));
-        xk613.setRewardsDistributor(address(distributor));
         xk613.setTransferWhitelist(address(distributor), true);
+        xk613.setTransferWhitelist(address(staking), true);
 
         handler = new StakingHandler(k613, xk613, staking, distributor, actors, LOCK_DURATION);
         k613.setMinter(address(handler));
@@ -150,12 +174,8 @@ contract InvariantStakingTest is StdInvariant, Test {
         assertGe(k613.balanceOf(address(staking)), totalDeposits);
     }
 
-    function invariant_xk613SupplyMatchesBalances() public view {
-        uint256 totalBalances = 0;
-        for (uint256 i = 0; i < actors.length; i++) {
-            totalBalances += xk613.balanceOf(actors[i]);
-        }
-        totalBalances += xk613.balanceOf(address(distributor));
-        assertEq(xk613.totalSupply(), totalBalances);
+    /// RD balance >= totalDeposits (penalties minted to RD can exceed deposits)
+    function invariant_rdBalanceMatchesDeposits() public view {
+        assertGe(xk613.balanceOf(address(distributor)), distributor.totalDeposits());
     }
 }

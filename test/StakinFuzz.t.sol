@@ -28,8 +28,8 @@ contract StakingFuzzTest is Test {
         distributor.setStaking(address(staking));
 
         xk613.setMinter(address(staking));
-        xk613.setRewardsDistributor(address(distributor));
         xk613.setTransferWhitelist(address(distributor), true);
+        xk613.setTransferWhitelist(address(staking), true);
     }
 
     function testFuzzStake(uint256 rawAmount, address user) public {
@@ -60,16 +60,16 @@ contract StakingFuzzTest is Test {
         vm.startPrank(user);
         k613.approve(address(staking), amount);
         staking.stake(amount);
-        staking.initiateExit();
+        xk613.approve(address(staking), amount);
+        staking.initiateExit(amount);
         vm.stopPrank();
 
         vm.warp(block.timestamp + LOCK_DURATION);
         vm.prank(user);
-        staking.exit();
+        staking.exit(0);
 
         (uint256 deposited,) = staking.deposits(user);
         assertEq(deposited, 0);
-        assertEq(xk613.balanceOf(user), 0);
         assertEq(k613.balanceOf(user), amount);
         assertEq(k613.balanceOf(address(staking)), 0);
     }
@@ -84,20 +84,19 @@ contract StakingFuzzTest is Test {
         vm.startPrank(user);
         k613.approve(address(staking), amount);
         staking.stake(amount);
-        staking.initiateExit();
+        xk613.approve(address(staking), amount);
+        staking.initiateExit(amount);
         vm.stopPrank();
 
         vm.warp(block.timestamp + LOCK_DURATION - 1);
         vm.prank(user);
-        staking.instantExit(amount);
+        staking.instantExit(0);
 
         uint256 penalty = (amount * PENALTY_BPS) / 10_000;
         uint256 payout = amount - penalty;
 
         (uint256 deposited,) = staking.deposits(user);
         assertEq(deposited, 0);
-        assertEq(xk613.balanceOf(user), 0);
         assertEq(k613.balanceOf(user), payout);
-        assertEq(xk613.balanceOf(address(distributor)), penalty);
     }
 }

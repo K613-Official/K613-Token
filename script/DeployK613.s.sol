@@ -45,10 +45,7 @@ contract DeployK613 is Script {
         xk613.setMinter(address(staking));
         xk613.grantRole(xk613.MINTER_ROLE(), address(treasury));
 
-        // xK613: RewardsDistributor for handleAction
-        xk613.setRewardsDistributor(address(distributor));
-
-        // xK613: whitelist RewardsDistributor for claim transfers
+        // xK613: whitelist RewardsDistributor for deposit/withdraw/claim transfers
         xk613.setTransferWhitelist(address(distributor), true);
 
         // Staking -> RewardsDistributor
