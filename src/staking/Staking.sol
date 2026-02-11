@@ -218,7 +218,6 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         if (s.exitQueue.length >= MAX_EXIT_REQUESTS) revert ExitQueueFull();
         s.exitQueue.push(ExitRequest({amount: amount, exitInitiatedAt: block.timestamp}));
         IERC20(address(xk613)).safeTransferFrom(msg.sender, address(this), amount);
-       
 
         emit ExitInitiated(msg.sender, s.exitQueue.length - 1, amount, block.timestamp);
     }
