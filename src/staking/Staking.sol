@@ -278,7 +278,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         xk613.burnFrom(address(this), amount);
         if (penalty > 0) {
             xk613.mint(address(rewardsDistributor), penalty);
-            rewardsDistributor.notifyReward(penalty);
+            rewardsDistributor.addPendingPenalty(penalty);
         }
         k613.safeTransfer(msg.sender, payout);
 

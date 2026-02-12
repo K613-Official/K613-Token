@@ -10,6 +10,7 @@ import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
 
 contract StakingTest is Test {
     uint256 private constant LOCK_DURATION = 7 days;
+    uint256 private constant EPOCH_DURATION = 7 days;
     uint256 private constant PENALTY_BPS = 5_000; // 50%
     uint256 private constant ONE = 1e18;
 
@@ -25,7 +26,7 @@ contract StakingTest is Test {
         k613 = new K613(address(this));
         xk613 = new xK613(address(this));
         staking = new Staking(address(k613), address(xk613), LOCK_DURATION, PENALTY_BPS);
-        distributor = new RewardsDistributor(address(xk613));
+        distributor = new RewardsDistributor(address(xk613), EPOCH_DURATION);
 
         staking.setRewardsDistributor(address(distributor));
         distributor.setStaking(address(staking));

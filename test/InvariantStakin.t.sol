@@ -119,10 +119,9 @@ contract StakingHandler is Test {
         staking.exit(index);
     }
 
-    /// @notice Claims rewards from RD if actor has deposits and no active exit.
+    /// @notice Claims rewards from RD if actor has pending rewards.
     function rewardsClaim(uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
-        if (staking.exitQueueLength(actor) > 0) return;
         if (distributor.pendingRewardsOf(actor) == 0) return;
         vm.prank(actor);
         distributor.claim();
@@ -131,6 +130,7 @@ contract StakingHandler is Test {
 
 contract InvariantStakingTest is StdInvariant, Test {
     uint256 private constant LOCK_DURATION = 7 days;
+    uint256 private constant EPOCH_DURATION = 7 days;
     uint256 private constant PENALTY_BPS = 5_000;
 
     K613 private k613;
@@ -150,7 +150,7 @@ contract InvariantStakingTest is StdInvariant, Test {
         k613 = new K613(address(this));
         xk613 = new xK613(address(this));
         staking = new Staking(address(k613), address(xk613), LOCK_DURATION, PENALTY_BPS);
-        distributor = new RewardsDistributor(address(xk613));
+        distributor = new RewardsDistributor(address(xk613), EPOCH_DURATION);
 
         staking.setRewardsDistributor(address(distributor));
         distributor.setStaking(address(staking));
