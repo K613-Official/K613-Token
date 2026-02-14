@@ -10,6 +10,7 @@ import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
 
 contract StakingFuzzTest is Test {
     uint256 private constant LOCK_DURATION = 7 days;
+    uint256 private constant EPOCH_DURATION = 7 days;
     uint256 private constant PENALTY_BPS = 5_000;
     uint256 private constant MAX_AMOUNT = 1_000_000 ether;
 
@@ -22,7 +23,7 @@ contract StakingFuzzTest is Test {
         k613 = new K613(address(this));
         xk613 = new xK613(address(this));
         staking = new Staking(address(k613), address(xk613), LOCK_DURATION, PENALTY_BPS);
-        distributor = new RewardsDistributor(address(xk613));
+        distributor = new RewardsDistributor(address(xk613), EPOCH_DURATION);
 
         staking.setRewardsDistributor(address(distributor));
         distributor.setStaking(address(staking));

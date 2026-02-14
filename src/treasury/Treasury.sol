@@ -78,8 +78,9 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Executes a buyback: swaps tokenIn for K613 via the router and optionally distributes to stakers.
+    /// @dev Router must be trusted; it receives arbitrary calldata. Use a whitelist in production.
     /// @param tokenIn Token to swap for K613.
-    /// @param router DEX router address (e.g. Uniswap, 1inch).
+    /// @param router DEX router address (e.g. Uniswap, 1inch). Must be trusted.
     /// @param amountIn Amount of tokenIn to swap.
     /// @param data Calldata for the router's swap function.
     /// @param minK613Out Minimum K613 expected; reverts if output is lower.

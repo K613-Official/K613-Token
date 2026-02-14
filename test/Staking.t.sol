@@ -10,6 +10,7 @@ import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
 
 contract StakingTest is Test {
     uint256 private constant LOCK_DURATION = 7 days;
+    uint256 private constant EPOCH_DURATION = 7 days;
     uint256 private constant PENALTY_BPS = 5_000; // 50%
     uint256 private constant ONE = 1e18;
 
@@ -25,7 +26,7 @@ contract StakingTest is Test {
         k613 = new K613(address(this));
         xk613 = new xK613(address(this));
         staking = new Staking(address(k613), address(xk613), LOCK_DURATION, PENALTY_BPS);
-        distributor = new RewardsDistributor(address(xk613));
+        distributor = new RewardsDistributor(address(xk613), EPOCH_DURATION);
 
         staking.setRewardsDistributor(address(distributor));
         distributor.setStaking(address(staking));
@@ -239,6 +240,28 @@ contract StakingTest is Test {
         staking.instantExit(0);
     }
 
+    function test_SetRewardsDistributor_AllowsZero() public {
+        staking.setRewardsDistributor(address(0));
+        assertEq(address(staking.rewardsDistributor()), address(0));
+    }
+
+    function test_InstantExit_RevertsWhenDistributorZeroAndPenalty() public {
+        staking.setRewardsDistributor(address(0));
+        vm.prank(alice);
+        k613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.stake(100 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+        vm.warp(block.timestamp + 1 days);
+
+        vm.prank(alice);
+        vm.expectRevert(Staking.RewardsDistributorNotSet.selector);
+        staking.instantExit(0);
+    }
+
     function test_InstantExit_PenaltyToDistributor() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -434,5 +457,152 @@ contract StakingTest is Test {
         vm.prank(alice);
         vm.expectRevert();
         staking.exit(0);
+    }
+
+    function test_InitiateExit_ExitQueueFull() public {
+        vm.prank(alice);
+        k613.approve(address(staking), 1_100 * ONE);
+        vm.prank(alice);
+        staking.stake(1_100 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(staking), 1_100 * ONE);
+        for (uint256 i = 0; i < staking.MAX_EXIT_REQUESTS(); i++) {
+            vm.prank(alice);
+            staking.initiateExit(100 * ONE);
+        }
+        vm.prank(alice);
+        vm.expectRevert(Staking.ExitQueueFull.selector);
+        staking.initiateExit(100 * ONE);
+    }
+
+    function test_InstantExit_PenaltyZeroBps() public {
+        xK613 freshXk = new xK613(address(this));
+        Staking noPenaltyStaking = new Staking(address(k613), address(freshXk), LOCK_DURATION, 0);
+        freshXk.setMinter(address(noPenaltyStaking));
+        freshXk.setTransferWhitelist(address(noPenaltyStaking), true);
+
+        vm.prank(alice);
+        k613.approve(address(noPenaltyStaking), 100 * ONE);
+        vm.prank(alice);
+        noPenaltyStaking.stake(100 * ONE);
+        vm.prank(alice);
+        freshXk.approve(address(noPenaltyStaking), 100 * ONE);
+        vm.prank(alice);
+        noPenaltyStaking.initiateExit(100 * ONE);
+        vm.warp(block.timestamp + 1 days);
+
+        uint256 before = k613.balanceOf(alice);
+        vm.prank(alice);
+        noPenaltyStaking.instantExit(0);
+        assertEq(k613.balanceOf(alice), before + 100 * ONE);
+    }
+
+    function test_WithdrawPenalties_NoPenalties_Noop() public {
+        uint256 treasuryBefore = k613.balanceOf(address(0x1));
+        staking.withdrawPenalties(address(0x1));
+        assertEq(k613.balanceOf(address(0x1)), treasuryBefore);
+    }
+
+    function test_Pause_BlocksInitiateExit() public {
+        vm.prank(alice);
+        k613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.stake(100 * ONE);
+        staking.pause();
+        vm.prank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        vm.expectRevert();
+        staking.initiateExit(100 * ONE);
+    }
+
+    function test_Pause_BlocksCancelExit() public {
+        vm.prank(alice);
+        k613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.stake(100 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+        staking.pause();
+        vm.prank(alice);
+        vm.expectRevert();
+        staking.cancelExit(0);
+    }
+
+    function test_Pause_BlocksInstantExit() public {
+        vm.prank(alice);
+        k613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.stake(100 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+        vm.warp(block.timestamp + 1 days);
+        staking.pause();
+        vm.prank(alice);
+        vm.expectRevert();
+        staking.instantExit(0);
+    }
+
+    function test_InvalidBps_Reverts() public {
+        vm.expectRevert(Staking.InvalidBps.selector);
+        new Staking(address(k613), address(xk613), LOCK_DURATION, 10_001);
+    }
+
+    function test_ExitQueue_SwapRemove_IndexIntegrity() public {
+        vm.prank(alice);
+        k613.approve(address(staking), 300 * ONE);
+        vm.prank(alice);
+        staking.stake(300 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(staking), 300 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+
+        vm.prank(alice);
+        staking.cancelExit(1);
+        (uint256 a0,) = staking.exitRequestAt(alice, 0);
+        (uint256 a1,) = staking.exitRequestAt(alice, 1);
+        assertEq(a0, 100 * ONE);
+        assertEq(a1, 100 * ONE);
+
+        vm.warp(block.timestamp + LOCK_DURATION);
+        vm.prank(alice);
+        staking.exit(1);
+        (uint256 r0,) = staking.exitRequestAt(alice, 0);
+        assertEq(r0, 100 * ONE);
+        assertEq(staking.exitQueueLength(alice), 1);
+    }
+
+    function test_WithdrawPenalties_AfterMultipleInstantExits() public {
+        address treasury = address(0xDeaD);
+        vm.prank(alice);
+        k613.approve(address(staking), 300 * ONE);
+        vm.prank(alice);
+        staking.stake(300 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(staking), 300 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        staking.instantExit(0);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        staking.instantExit(0);
+
+        uint256 expected = (200 * ONE * PENALTY_BPS) / 10_000;
+        assertEq(staking.withdrawablePenalties(), expected);
+        staking.withdrawPenalties(treasury);
+        assertEq(k613.balanceOf(treasury), expected);
     }
 }
