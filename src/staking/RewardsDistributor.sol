@@ -16,6 +16,8 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     error ZeroAmount();
     error NoRewards();
     error InsufficientBalance();
+    error InvalidEpochDuration();
+    error MinimumInitialDeposit();
 
     /// @notice xK613 token used for deposits and rewards.
     IERC20 public immutable xk613;
@@ -24,6 +26,8 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant REWARDS_NOTIFIER_ROLE = keccak256("REWARDS_NOTIFIER_ROLE");
 
     uint256 public constant MIN_PENALTY_FLUSH = 1e18;
+    /// @notice Minimum first deposit to prevent first-depositor griefing.
+    uint256 public constant MIN_INITIAL_DEPOSIT = 1e12;
 
     /// @notice Epoch duration in seconds. Penalties flush at epoch boundary even if below threshold.
     uint256 public immutable epochDuration;
@@ -56,6 +60,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
 
     constructor(address xk613Token, uint256 epochDuration_) {
         if (xk613Token == address(0)) revert ZeroAddress();
+        if (epochDuration_ == 0) revert InvalidEpochDuration();
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(PAUSER_ROLE, msg.sender);
         xk613 = IERC20(xk613Token);
@@ -78,6 +83,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     /// @notice Deposits xK613 to earn rewards. Caller must approve this contract first.
     function deposit(uint256 amount) external nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
+        if (totalDeposits == 0 && amount < MIN_INITIAL_DEPOSIT) revert MinimumInitialDeposit();
         _updateUser(msg.sender);
         balanceOf[msg.sender] += amount;
         totalDeposits += amount;
