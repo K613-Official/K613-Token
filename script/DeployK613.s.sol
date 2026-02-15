@@ -12,6 +12,7 @@ import {Treasury} from "../src/treasury/Treasury.sol";
 /// @notice Deploys K613 staking stack to Arbitrum Sepolia testnet
 contract DeployK613 is Script {
     uint256 private constant LOCK_DURATION = 90 days;
+    uint256 private constant EPOCH_DURATION = 7 days;
     uint256 private constant INSTANT_EXIT_PENALTY_BPS = 5000;
 
     function run() external {
@@ -30,7 +31,7 @@ contract DeployK613 is Script {
         console.log("xK613:", address(xk613));
 
         // 3. RewardsDistributor
-        RewardsDistributor distributor = new RewardsDistributor(address(xk613));
+        RewardsDistributor distributor = new RewardsDistributor(address(xk613), EPOCH_DURATION);
         console.log("RewardsDistributor:", address(distributor));
 
         // 4. Staking

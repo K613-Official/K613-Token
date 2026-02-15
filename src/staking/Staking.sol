@@ -139,10 +139,9 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         instantExitPenaltyBps = instantExitPenaltyBps_;
     }
 
-    /// @notice Sets the rewards distributor contract.
+    /// @notice Sets the rewards distributor contract. Pass address(0) to disable; instant exit with penalty will revert until set.
     /// @param distributor Address of the rewards distributor.
     function setRewardsDistributor(address distributor) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (distributor == address(0)) revert ZeroAddress();
         rewardsDistributor = RewardsDistributor(distributor);
         emit RewardsDistributorUpdated(distributor);
     }
@@ -278,7 +277,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         xk613.burnFrom(address(this), amount);
         if (penalty > 0) {
             xk613.mint(address(rewardsDistributor), penalty);
-            rewardsDistributor.notifyReward(penalty);
+            rewardsDistributor.addPendingPenalty(penalty);
         }
         k613.safeTransfer(msg.sender, payout);
 
