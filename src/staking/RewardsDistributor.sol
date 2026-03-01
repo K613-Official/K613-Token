@@ -126,14 +126,15 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Claims accumulated rewards. Reverts while caller has an active exit vesting in Staking (withdraw from RD first, then exit; no claim during vesting).
     function claim() external nonReentrant whenNotPaused {
+        // slither-disable-next-line reentrancy-benign: view call; state updates below occur before any state-changing external calls (_stakeHeldK613, transfer).
         if (address(staking) != address(0) && IStaking(staking).exitQueueLength(msg.sender) > 0) {
             revert ExitVestingActive();
         }
-        _stakeHeldK613();
         _updateUser(msg.sender);
         uint256 reward = userPendingRewards[msg.sender];
         if (reward == 0) revert NoRewards();
         userPendingRewards[msg.sender] = 0;
+        _stakeHeldK613();
         rewardToken.safeTransfer(msg.sender, reward);
         emit Claimed(msg.sender, reward);
     }
