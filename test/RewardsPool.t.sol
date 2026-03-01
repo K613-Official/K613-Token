@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.33;
+pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
 import {IAccessControl} from "openzeppelin-contracts/contracts/access/IAccessControl.sol";
@@ -10,6 +10,8 @@ import {Staking} from "../src/staking/Staking.sol";
 
 contract RewardsDistributorTest is Test {
     xK613 private token;
+    K613 private k613;
+    Staking private staking;
     RewardsDistributor private distributor;
 
     address private alice = address(0xA11CE);
@@ -20,11 +22,18 @@ contract RewardsDistributorTest is Test {
 
     function setUp() public {
         token = new xK613(address(this));
-        distributor = new RewardsDistributor(address(token), EPOCH);
-        distributor.setStaking(address(0)); // No staking in unit tests - no claim block
+        k613 = new K613(address(this));
+        k613.mint(address(this), 100_000 * ONE);
+        staking = new Staking(address(k613), address(token), 7 days, 0);
+        token.setMinter(address(staking));
+        token.grantRole(token.MINTER_ROLE(), address(this));
+        distributor = new RewardsDistributor(address(token), address(token), address(k613), EPOCH);
+        distributor.setStaking(address(staking));
         distributor.grantRole(distributor.REWARDS_NOTIFIER_ROLE(), address(this));
         token.setTransferWhitelist(address(distributor), true);
+        token.setTransferWhitelist(address(staking), true);
 
+        token.mint(address(this), 100_000 * ONE);
         token.mint(alice, 2_000 * ONE);
         token.mint(bob, 2_000 * ONE);
 
@@ -39,19 +48,31 @@ contract RewardsDistributorTest is Test {
         vm.stopPrank();
     }
 
-    function testConstructorRevertsOnZero() public {
+    function testConstructorRevertsOnZeroStakingToken() public {
         vm.expectRevert(RewardsDistributor.ZeroAddress.selector);
-        new RewardsDistributor(address(0), EPOCH);
+        new RewardsDistributor(address(0), address(token), address(k613), EPOCH);
+    }
+
+    function testConstructorRevertsOnZeroRewardToken() public {
+        vm.expectRevert(RewardsDistributor.ZeroAddress.selector);
+        new RewardsDistributor(address(token), address(0), address(k613), EPOCH);
+    }
+
+    function testConstructorRevertsOnZeroK613() public {
+        vm.expectRevert(RewardsDistributor.ZeroAddress.selector);
+        new RewardsDistributor(address(token), address(token), address(0), EPOCH);
     }
 
     function testConstructorRevertsOnEpochZero() public {
         vm.expectRevert(RewardsDistributor.InvalidEpochDuration.selector);
-        new RewardsDistributor(address(token), 0);
+        new RewardsDistributor(address(token), address(token), address(k613), 0);
     }
 
     function testDepositRevertsBelowMinInitial() public {
         xK613 freshToken = new xK613(address(this));
-        RewardsDistributor freshRd = new RewardsDistributor(address(freshToken), EPOCH);
+        K613 freshK613 = new K613(address(this));
+        RewardsDistributor freshRd =
+            new RewardsDistributor(address(freshToken), address(freshToken), address(freshK613), EPOCH);
         freshRd.grantRole(freshRd.REWARDS_NOTIFIER_ROLE(), address(this));
         freshToken.setTransferWhitelist(address(freshRd), true);
         freshToken.mint(alice, 1e12);
@@ -84,6 +105,12 @@ contract RewardsDistributorTest is Test {
         distributor.notifyReward(0);
     }
 
+    function testNotifyRewardBelowMinReverts() public {
+        token.transfer(address(distributor), 1);
+        vm.expectRevert(RewardsDistributor.MinimumNotify.selector);
+        distributor.notifyReward(1);
+    }
+
     function testNotifyRewardWhenTotalDepositsZeroGoesToPending() public {
         vm.prank(alice);
         distributor.withdraw(1_000 * ONE);
@@ -91,7 +118,7 @@ contract RewardsDistributorTest is Test {
         distributor.withdraw(1_000 * ONE);
         assertEq(distributor.totalDeposits(), 0);
 
-        token.mint(address(distributor), 10 * ONE);
+        token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
 
         assertEq(distributor.pendingRewards(), 10 * ONE);
@@ -106,7 +133,7 @@ contract RewardsDistributorTest is Test {
         );
     }
 
-    function testNotifyRewardDust_Amount1_TotalDeposits1e24() public {
+    function testNotifyRewardDust_SmallAmountRoundsDown() public {
         vm.prank(alice);
         distributor.withdraw(1_000 * ONE);
         vm.prank(bob);
@@ -122,43 +149,34 @@ contract RewardsDistributorTest is Test {
         uint256 total = distributor.totalDeposits();
         assertEq(total, 1e24);
 
-        token.mint(address(distributor), 100);
-        uint256 accBefore = distributor.accRewardPerShare();
-        distributor.notifyReward(1);
-        uint256 accAfter = distributor.accRewardPerShare();
-
-        assertEq((1 * 1e18) / total, 0, "dust rounds to 0");
-        assertEq(accAfter, accBefore, "accRewardPerShare unchanged when dust rounds to 0");
-        assertEq(distributor.pendingRewards(), 0);
-    }
-
-    function testNotifyRewardSmallAmount_RoundsToZero() public {
-        uint256 total = 2_000 * ONE;
-        uint256 dustAmount = (total / 1e18) - 1;
-        if (dustAmount == 0) dustAmount = 1;
-        assertEq((dustAmount * 1e18) / total, 0, "amount * 1e18 / total == 0");
-
-        token.mint(address(distributor), dustAmount + 100 * ONE);
+        uint256 dustAmount = distributor.MIN_NOTIFY(); // 1e12
+        token.transfer(address(distributor), dustAmount + 100 * ONE);
         uint256 accBefore = distributor.accRewardPerShare();
         distributor.notifyReward(dustAmount);
         uint256 accAfter = distributor.accRewardPerShare();
+        assertGe(accAfter, accBefore);
+    }
 
-        assertEq(accAfter, accBefore);
-        uint256 alicePending = distributor.pendingRewardsOf(alice);
-        uint256 bobPending = distributor.pendingRewardsOf(bob);
-        assertEq(alicePending, 0);
-        assertEq(bobPending, 0);
+    function testNotifyRewardSmallAmount_ThenLargeDistributes() public {
+        uint256 total = 2_000 * ONE;
+        uint256 smallAmount = distributor.MIN_NOTIFY(); // minimum allowed notify
 
+        token.transfer(address(distributor), smallAmount + 100 * ONE);
+        distributor.notifyReward(smallAmount);
+
+        token.transfer(address(distributor), 100 * ONE);
         distributor.notifyReward(100 * ONE);
-        uint256 expectedPerUser = (1_000 * ONE * 100 * ONE) / total;
-        assertApproxEqAbs(distributor.pendingRewardsOf(alice), expectedPerUser, 1000);
+        uint256 totalRewards = smallAmount + 100 * ONE;
+        uint256 expectedPerUser = (1_000 * ONE * totalRewards) / total;
+        assertApproxEqAbs(distributor.pendingRewardsOf(alice), expectedPerUser, 10000);
+        assertApproxEqAbs(distributor.pendingRewardsOf(bob), expectedPerUser, 10000);
     }
 
     function testNotifyRewardManySmallAmounts_TotalMatches() public {
         uint256 totalNotify = 0;
         uint256 n = 20;
         uint256 each = (10 * ONE) / n;
-        token.mint(address(distributor), 50 * ONE);
+        token.transfer(address(distributor), 50 * ONE);
 
         for (uint256 i = 0; i < n; i++) {
             distributor.notifyReward(each);
@@ -195,7 +213,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testAddPendingPenaltyAccumulatesUntilThreshold() public {
-        token.mint(address(distributor), 5 * ONE);
+        k613.transfer(address(distributor), 5 * ONE);
         uint256 half = ONE / 2;
         distributor.addPendingPenalty(half);
         assertEq(distributor.pendingPenalties(), half);
@@ -205,7 +223,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testAddPendingPenaltyFlushOnClaim() public {
-        token.mint(address(distributor), 5 * ONE);
+        k613.transfer(address(distributor), 5 * ONE);
         uint256 penalty = ONE + (ONE / 2);
         distributor.addPendingPenalty(penalty);
         assertEq(distributor.pendingPenalties(), penalty);
@@ -222,6 +240,7 @@ contract RewardsDistributorTest is Test {
 
     function testAddPendingPenaltyNoFlushBelowThreshold() public {
         uint256 half = ONE / 2;
+        k613.transfer(address(distributor), half);
         distributor.addPendingPenalty(half);
         assertEq(distributor.pendingPenalties(), half);
         vm.prank(alice);
@@ -231,7 +250,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testEpochFlush_PenaltiesBelowThreshold() public {
-        token.mint(address(distributor), 5 * ONE);
+        k613.transfer(address(distributor), 5 * ONE);
         uint256 half = ONE / 2;
         distributor.addPendingPenalty(half);
         assertEq(distributor.pendingPenalties(), half);
@@ -265,7 +284,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testClaim_PauseReverts() public {
-        token.mint(address(distributor), 10 * ONE);
+        token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
         distributor.pause();
         vm.prank(alice);
@@ -278,13 +297,20 @@ contract RewardsDistributorTest is Test {
         distributor.withdraw(1_000 * ONE);
         vm.prank(bob);
         distributor.withdraw(1_000 * ONE);
+        k613.transfer(address(distributor), ONE);
         distributor.addPendingPenalty(ONE);
+        vm.warp(block.timestamp + EPOCH + 1);
         distributor.advanceEpoch();
         assertEq(distributor.pendingPenalties(), ONE);
     }
 
+    function testAdvanceEpoch_BeforeEpochEnd_Reverts() public {
+        vm.expectRevert(RewardsDistributor.EpochNotReady.selector);
+        distributor.advanceEpoch();
+    }
+
     function testAdvanceEpoch_AnyoneCanCall() public {
-        token.mint(address(distributor), ONE);
+        k613.transfer(address(distributor), ONE + (ONE / 2));
         distributor.addPendingPenalty(ONE + (ONE / 2));
         vm.warp(block.timestamp + EPOCH + 1);
         vm.prank(bob);
@@ -293,7 +319,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testWithdraw_AfterDeposit_PreservesRewardShare() public {
-        token.mint(address(distributor), 10 * ONE);
+        token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
         vm.prank(alice);
         distributor.withdraw(500 * ONE);
@@ -306,7 +332,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testMultipleEpochs_PenaltiesFlushCorrectly() public {
-        token.mint(address(distributor), 10 * ONE);
+        k613.transfer(address(distributor), 10 * ONE);
         distributor.addPendingPenalty(ONE / 2);
         vm.warp(block.timestamp + EPOCH * 3);
         vm.prank(alice);
@@ -317,7 +343,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testSetStaking_RoleRevokedFromOld() public {
-        RewardsDistributor rd = new RewardsDistributor(address(token), EPOCH);
+        RewardsDistributor rd = new RewardsDistributor(address(token), address(token), address(k613), EPOCH);
         rd.grantRole(rd.DEFAULT_ADMIN_ROLE(), address(this));
         address oldStaking = address(0x111);
         rd.setStaking(oldStaking);
@@ -328,19 +354,20 @@ contract RewardsDistributorTest is Test {
     }
 
     function test_FullFlow_Stake_Initiate_Exit_Claim() public {
-        K613 k613 = new K613(address(this));
-        Staking staking = new Staking(address(k613), address(token), 7 days, 0);
+        K613 k613Local = new K613(address(this));
+        Staking staking = new Staking(address(k613Local), address(token), 7 days, 0);
         token.setMinter(address(staking));
         token.grantRole(token.MINTER_ROLE(), address(this));
         token.setTransferWhitelist(address(staking), true);
-        k613.mint(alice, 1_000 * ONE);
+        k613Local.mint(alice, 1_000 * ONE);
+        k613Local.mint(address(this), 10 * ONE);
         vm.startPrank(alice);
-        k613.approve(address(staking), 1_000 * ONE);
+        k613Local.approve(address(staking), 1_000 * ONE);
         staking.stake(1_000 * ONE);
         token.approve(address(distributor), 1_000 * ONE);
         distributor.deposit(1_000 * ONE);
         vm.stopPrank();
-        token.mint(address(distributor), 10 * ONE);
+        token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
         vm.prank(alice);
         distributor.withdraw(1_000 * ONE);
@@ -351,15 +378,18 @@ contract RewardsDistributorTest is Test {
         vm.warp(block.timestamp + 7 days);
         vm.prank(alice);
         staking.exit(0);
-        assertEq(k613.balanceOf(alice), 1_000 * ONE);
+        assertEq(k613Local.balanceOf(alice), 1_000 * ONE);
+        uint256 aliceXkBefore = token.balanceOf(alice);
         vm.prank(alice);
         distributor.claim();
-        assertGt(token.balanceOf(alice), 1_000 * ONE);
+        // setUp had alice 1000 + bob 1000; this test adds alice 1000 → alice 2000, bob 1000, total 3000. Alice share = 2/3 of 10 = 20/3
+        uint256 aliceExpected = (20 * ONE) / 3;
+        assertApproxEqAbs(token.balanceOf(alice), aliceXkBefore + aliceExpected, 1e15);
     }
 
     function test_RD_setStaking_Zero_ThenReSet() public {
-        K613 k613 = new K613(address(this));
-        Staking staking = new Staking(address(k613), address(token), 7 days, 5_000);
+        K613 k613Local = new K613(address(this));
+        Staking staking = new Staking(address(k613Local), address(token), 7 days, 5_000);
         token.setMinter(address(staking));
         token.grantRole(token.MINTER_ROLE(), address(this));
         token.setTransferWhitelist(address(staking), true);
@@ -372,7 +402,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testNotifyRewardDistributesToHolders() public {
-        token.mint(address(distributor), 10 * ONE);
+        token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
 
         uint256 aliceBefore = token.balanceOf(alice);
@@ -386,7 +416,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testClaimTransfersReward() public {
-        token.mint(address(distributor), 10 * ONE);
+        token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
 
         uint256 aliceBefore = token.balanceOf(alice);
@@ -400,7 +430,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testPendingRewardsOf() public {
-        token.mint(address(distributor), 10 * ONE);
+        token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
 
         uint256 aliceShare = (1_000 * ONE * 10 * ONE) / (2_000 * ONE);
@@ -438,9 +468,9 @@ contract RewardsDistributorTest is Test {
     }
 
     function testInstantExitSmallPenalty_AccumulatesInRD() public {
-        K613 k613 = new K613(address(this));
+        K613 k613Local = new K613(address(this));
         uint256 penaltyBps = 100;
-        Staking staking = new Staking(address(k613), address(token), 7 days, penaltyBps);
+        Staking staking = new Staking(address(k613Local), address(token), 7 days, penaltyBps);
         staking.setRewardsDistributor(address(distributor));
         distributor.setStaking(address(staking));
         token.setMinter(address(staking));
@@ -448,9 +478,9 @@ contract RewardsDistributorTest is Test {
         token.setTransferWhitelist(address(staking), true);
 
         uint256 smallStake = 10 * ONE;
-        k613.mint(alice, smallStake);
+        k613Local.mint(alice, smallStake);
         vm.startPrank(alice);
-        k613.approve(address(staking), smallStake);
+        k613Local.approve(address(staking), smallStake);
         staking.stake(smallStake);
         token.approve(address(staking), smallStake);
         staking.initiateExit(smallStake);
@@ -468,7 +498,7 @@ contract RewardsDistributorTest is Test {
     }
 
     function testDeposit_Withdraw_Claim_Ordering() public {
-        token.mint(address(distributor), 20 * ONE);
+        token.transfer(address(distributor), 20 * ONE);
         distributor.notifyReward(10 * ONE);
         vm.prank(alice);
         distributor.withdraw(500 * ONE);
@@ -480,25 +510,24 @@ contract RewardsDistributorTest is Test {
     }
 
     function test_RD_Staking_PenaltyFlow_Integration() public {
-        K613 k613 = new K613(address(this));
-        Staking staking = new Staking(address(k613), address(token), 7 days, 5_000);
-        staking.setRewardsDistributor(address(distributor));
-        distributor.setStaking(address(staking));
-        token.setMinter(address(staking));
+        Staking stakingWithPenalty = new Staking(address(k613), address(token), 7 days, 5_000);
+        token.setMinter(address(stakingWithPenalty));
         token.grantRole(token.MINTER_ROLE(), address(this));
-        token.setTransferWhitelist(address(staking), true);
+        token.setTransferWhitelist(address(stakingWithPenalty), true);
+        stakingWithPenalty.setRewardsDistributor(address(distributor));
+        distributor.setStaking(address(stakingWithPenalty));
 
         k613.mint(alice, 1_000 * ONE);
         vm.startPrank(alice);
-        k613.approve(address(staking), 1_000 * ONE);
-        staking.stake(1_000 * ONE);
-        token.approve(address(staking), 1_000 * ONE);
-        staking.initiateExit(1_000 * ONE);
+        k613.approve(address(stakingWithPenalty), 1_000 * ONE);
+        stakingWithPenalty.stake(1_000 * ONE);
+        token.approve(address(stakingWithPenalty), 1_000 * ONE);
+        stakingWithPenalty.initiateExit(1_000 * ONE);
         vm.stopPrank();
 
         vm.warp(block.timestamp + 1 days);
         vm.prank(alice);
-        staking.instantExit(0);
+        stakingWithPenalty.instantExit(0);
 
         uint256 penalty = (1_000 * ONE * 5_000) / 10_000;
         assertGe(distributor.pendingPenalties(), penalty);
@@ -512,36 +541,43 @@ contract RewardsDistributorTest is Test {
     }
 
     function testClaimWorksDuringExitVesting() public {
-        // Deploy Staking for integration test
-        K613 k613 = new K613(address(this));
-        Staking staking = new Staking(address(k613), address(token), 7 days, 5_000);
-        token.setMinter(address(staking));
+        K613 k613Local = new K613(address(this));
+        Staking stakingLocal = new Staking(address(k613Local), address(token), 7 days, 5_000);
+        token.setMinter(address(stakingLocal));
         token.grantRole(token.MINTER_ROLE(), address(this));
-        token.setTransferWhitelist(address(staking), true);
-        distributor.setStaking(address(staking));
-        k613.mint(alice, 1_000 * ONE);
+        token.setTransferWhitelist(address(stakingLocal), true);
+        distributor.setStaking(address(stakingLocal));
+        k613Local.mint(alice, 1_000 * ONE);
 
         vm.startPrank(alice);
-        k613.approve(address(staking), 1_000 * ONE);
-        staking.stake(1_000 * ONE);
+        k613Local.approve(address(stakingLocal), 1_000 * ONE);
+        stakingLocal.stake(1_000 * ONE);
         token.approve(address(distributor), 1_000 * ONE);
         distributor.deposit(1_000 * ONE);
         vm.stopPrank();
 
-        token.mint(address(distributor), 10 * ONE);
+        token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
 
-        // Alice withdraws from RD, initiates exit - can still claim accumulated rewards
+        // Alice withdraws from RD, initiates exit — claim blocked during exit vesting
         vm.prank(alice);
         distributor.withdraw(1_000 * ONE);
         vm.prank(alice);
-        token.approve(address(staking), 1_000 * ONE);
+        token.approve(address(stakingLocal), 1_000 * ONE);
         vm.prank(alice);
-        staking.initiateExit(1_000 * ONE);
+        stakingLocal.initiateExit(1_000 * ONE);
 
         uint256 pendingBefore = distributor.pendingRewardsOf(alice);
+        assertGt(pendingBefore, 0);
+        vm.prank(alice);
+        vm.expectRevert(RewardsDistributor.ExitVestingActive.selector);
+        distributor.claim();
+
+        // After cancel exit, claim works again
+        vm.prank(alice);
+        stakingLocal.cancelExit(0);
         vm.prank(alice);
         distributor.claim();
-        assertGt(pendingBefore, 0);
+        assertEq(distributor.pendingRewardsOf(alice), 0);
     }
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.33;
+pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
 
@@ -26,7 +26,7 @@ contract StakingTest is Test {
         k613 = new K613(address(this));
         xk613 = new xK613(address(this));
         staking = new Staking(address(k613), address(xk613), LOCK_DURATION, PENALTY_BPS);
-        distributor = new RewardsDistributor(address(xk613), EPOCH_DURATION);
+        distributor = new RewardsDistributor(address(xk613), address(xk613), address(k613), EPOCH_DURATION);
 
         staking.setRewardsDistributor(address(distributor));
         distributor.setStaking(address(staking));
@@ -67,6 +67,24 @@ contract StakingTest is Test {
         (uint256 amount,) = staking.deposits(alice);
         assertEq(amount, 150 * ONE);
         assertEq(xk613.balanceOf(alice), 150 * ONE);
+        assertTrue(staking.backingIntegrity());
+    }
+
+    function test_BackingIntegrity_HoldsAfterStakeAndExit() public {
+        vm.prank(alice);
+        k613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.stake(100 * ONE);
+        assertTrue(staking.backingIntegrity());
+
+        vm.prank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+        vm.warp(block.timestamp + LOCK_DURATION);
+        vm.prank(alice);
+        staking.exit(0);
+        assertTrue(staking.backingIntegrity());
     }
 
     function test_InitiateExit_StartsCountdown() public {
@@ -396,8 +414,7 @@ contract StakingTest is Test {
         assertEq(amount, 50 * ONE);
     }
 
-    function test_WithdrawPenalties_TransfersToRecipient() public {
-        address treasury = address(0xDeaDbEEf);
+    function test_InstantExit_PenaltyGoesToRewardsDistributor() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
         vm.prank(alice);
@@ -408,27 +425,12 @@ contract StakingTest is Test {
         staking.initiateExit(100 * ONE);
 
         vm.warp(block.timestamp + 1 days);
+        uint256 rdBefore = k613.balanceOf(address(distributor));
         vm.prank(alice);
         staking.instantExit(0);
 
         uint256 penalty = (100 * ONE * PENALTY_BPS) / 10_000;
-        assertEq(staking.withdrawablePenalties(), penalty);
-
-        uint256 treasuryBefore = k613.balanceOf(treasury);
-        staking.withdrawPenalties(treasury);
-        assertEq(k613.balanceOf(treasury), treasuryBefore + penalty);
-        assertEq(staking.withdrawablePenalties(), 0);
-    }
-
-    function test_WithdrawPenalties_OnlyAdmin() public {
-        vm.prank(alice);
-        vm.expectRevert();
-        staking.withdrawPenalties(address(0x1));
-    }
-
-    function test_WithdrawPenalties_ZeroRecipientReverts() public {
-        vm.expectRevert(Staking.ZeroAddress.selector);
-        staking.withdrawPenalties(address(0));
+        assertEq(k613.balanceOf(address(distributor)), rdBefore + penalty);
     }
 
     function test_Pause_BlocksStake() public {
@@ -495,12 +497,6 @@ contract StakingTest is Test {
         vm.prank(alice);
         noPenaltyStaking.instantExit(0);
         assertEq(k613.balanceOf(alice), before + 100 * ONE);
-    }
-
-    function test_WithdrawPenalties_NoPenalties_Noop() public {
-        uint256 treasuryBefore = k613.balanceOf(address(0x1));
-        staking.withdrawPenalties(address(0x1));
-        assertEq(k613.balanceOf(address(0x1)), treasuryBefore);
     }
 
     function test_Pause_BlocksInitiateExit() public {
@@ -581,8 +577,7 @@ contract StakingTest is Test {
         assertEq(staking.exitQueueLength(alice), 1);
     }
 
-    function test_WithdrawPenalties_AfterMultipleInstantExits() public {
-        address treasury = address(0xDeaD);
+    function test_InstantExit_Multiple_PenaltiesGoToRewardsDistributor() public {
         vm.prank(alice);
         k613.approve(address(staking), 300 * ONE);
         vm.prank(alice);
@@ -601,8 +596,6 @@ contract StakingTest is Test {
         staking.instantExit(0);
 
         uint256 expected = (200 * ONE * PENALTY_BPS) / 10_000;
-        assertEq(staking.withdrawablePenalties(), expected);
-        staking.withdrawPenalties(treasury);
-        assertEq(k613.balanceOf(treasury), expected);
+        assertEq(k613.balanceOf(address(distributor)), expected);
     }
 }

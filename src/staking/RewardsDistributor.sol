@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.33;
+pragma solidity 0.8.34;
 
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
@@ -7,8 +7,13 @@ import {ReentrancyGuard} from "openzeppelin-contracts/contracts/utils/Reentrancy
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
+interface IStaking {
+    function stake(uint256 amount) external;
+    function exitQueueLength(address user) external view returns (uint256);
+}
+
 /// @title RewardsDistributor
-/// @notice Manual deposit/withdraw: users deposit xK613 to earn rewards. Claim anytime. Penalties flush above threshold or at epoch boundary.
+/// @notice Users deposit xK613 (stakingToken) to earn rewards in xK613 (rewardToken). Claim anytime. Penalties from instant exit are staked to get xK613, then distributed. Rewards can be converted to K613 via Staking instant exit (50% penalty).
 contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -18,16 +23,29 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     error InsufficientBalance();
     error InvalidEpochDuration();
     error MinimumInitialDeposit();
+    error MinimumNotify();
+    /// @notice Thrown when advanceEpoch() is called before the current epoch has ended.
+    error EpochNotReady();
+    /// @notice Thrown when claim() is called while the user has an active exit vesting in Staking.
+    error ExitVestingActive();
 
-    /// @notice xK613 token used for deposits and rewards.
-    IERC20 public immutable xk613;
+    /// @notice Staking token (xK613): users deposit this to earn rewards.
+    IERC20 public immutable stakingToken;
+    /// @notice Reward token (xK613): rewards are paid out in xK613. Same token as stakingToken.
+    IERC20 public immutable rewardToken;
+    /// @notice K613 token; used to stake penalty K613 in Staking to get xK613 for distribution.
+    IERC20 public immutable k613;
 
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 public constant REWARDS_NOTIFIER_ROLE = keccak256("REWARDS_NOTIFIER_ROLE");
 
+    /// @notice Scale for accRewardPerShare and reward math
+    uint256 private constant PRECISION = 1e18;
     uint256 public constant MIN_PENALTY_FLUSH = 1e18;
     /// @notice Minimum first deposit to prevent first-depositor griefing.
     uint256 public constant MIN_INITIAL_DEPOSIT = 1e12;
+    /// @notice Minimum amount per notifyReward to avoid precision loss and notify spam.
+    uint256 public constant MIN_NOTIFY = 1e12;
 
     /// @notice Epoch duration in seconds. Penalties flush at epoch boundary even if below threshold.
     uint256 public immutable epochDuration;
@@ -40,7 +58,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     uint256 public pendingRewards;
     /// @notice Penalties from instant exit; flushed when >= MIN_PENALTY_FLUSH to avoid dust rounding.
     uint256 public pendingPenalties;
-    /// @notice Total xK613 deposited by all users.
+    /// @notice Total stakingToken (xK613) deposited by all users.
     uint256 public totalDeposits;
 
     mapping(address => uint256) public balanceOf;
@@ -58,12 +76,14 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     event PenaltyAdded(uint256 amount);
     event EpochAdvanced(uint256 timestamp);
 
-    constructor(address xk613Token, uint256 epochDuration_) {
-        if (xk613Token == address(0)) revert ZeroAddress();
+    constructor(address stakingToken_, address rewardToken_, address k613_, uint256 epochDuration_) {
+        if (stakingToken_ == address(0) || rewardToken_ == address(0) || k613_ == address(0)) revert ZeroAddress();
         if (epochDuration_ == 0) revert InvalidEpochDuration();
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(PAUSER_ROLE, msg.sender);
-        xk613 = IERC20(xk613Token);
+        stakingToken = IERC20(stakingToken_);
+        rewardToken = IERC20(rewardToken_);
+        k613 = IERC20(k613_);
         epochDuration = epochDuration_;
         lastEpochFlushAt = block.timestamp;
     }
@@ -87,8 +107,8 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         _updateUser(msg.sender);
         balanceOf[msg.sender] += amount;
         totalDeposits += amount;
-        userRewardDebt[msg.sender] = (balanceOf[msg.sender] * accRewardPerShare) / 1e18;
-        xk613.safeTransferFrom(msg.sender, address(this), amount);
+        userRewardDebt[msg.sender] = (balanceOf[msg.sender] * accRewardPerShare) / PRECISION;
+        stakingToken.safeTransferFrom(msg.sender, address(this), amount);
         emit Deposited(msg.sender, amount);
     }
 
@@ -99,37 +119,52 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         _updateUser(msg.sender);
         balanceOf[msg.sender] -= amount;
         totalDeposits -= amount;
-        userRewardDebt[msg.sender] = (balanceOf[msg.sender] * accRewardPerShare) / 1e18;
-        xk613.safeTransfer(msg.sender, amount);
+        userRewardDebt[msg.sender] = (balanceOf[msg.sender] * accRewardPerShare) / PRECISION;
+        stakingToken.safeTransfer(msg.sender, amount);
         emit Withdrawn(msg.sender, amount);
     }
 
-    /// @notice Claims accumulated rewards.
+    /// @notice Claims accumulated rewards. Reverts while caller has an active exit vesting in Staking (withdraw from RD first, then exit; no claim during vesting).
     function claim() external nonReentrant whenNotPaused {
+        if (address(staking) != address(0) && IStaking(staking).exitQueueLength(msg.sender) > 0) {
+            revert ExitVestingActive();
+        }
+        _stakeHeldK613();
         _updateUser(msg.sender);
         uint256 reward = userPendingRewards[msg.sender];
         if (reward == 0) revert NoRewards();
         userPendingRewards[msg.sender] = 0;
-        xk613.safeTransfer(msg.sender, reward);
+        rewardToken.safeTransfer(msg.sender, reward);
         emit Claimed(msg.sender, reward);
     }
 
-    /// @notice Notifies new rewards. Called by Treasury.
+    /// @notice Notifies new rewards in xK613. Caller must have transferred rewardToken (xK613) to this contract first.
     function notifyReward(uint256 amount) external nonReentrant onlyRole(REWARDS_NOTIFIER_ROLE) whenNotPaused {
         if (amount == 0) revert ZeroAmount();
+        if (amount < MIN_NOTIFY) revert MinimumNotify();
         if (totalDeposits == 0) {
             pendingRewards += amount;
             return;
         }
-        accRewardPerShare += (amount * 1e18) / totalDeposits;
+        accRewardPerShare += (amount * PRECISION) / totalDeposits;
         emit RewardNotified(amount);
     }
 
-    /// @notice Adds instant-exit penalty; accumulates until MIN_PENALTY_FLUSH, then distributes. Called by Staking.
+    /// @notice Receives K613 penalty from Staking; adds to pending penalties. K613 is staked to xK613 on next claim/advanceEpoch to avoid reentrancy (Staking calls this).
     function addPendingPenalty(uint256 amount) external nonReentrant onlyRole(REWARDS_NOTIFIER_ROLE) whenNotPaused {
         if (amount == 0) return;
         pendingPenalties += amount;
         emit PenaltyAdded(amount);
+    }
+
+    /// @notice Stakes any K613 held by this contract to get xK613
+    function _stakeHeldK613() internal {
+        if (address(staking) == address(0)) return;
+        uint256 balance = k613.balanceOf(address(this));
+        if (balance < 1) return;
+        k613.forceApprove(address(staking), balance);
+        IStaking(staking).stake(balance);
+        k613.forceApprove(address(staking), 0);
     }
 
     /// @notice Pauses reward-related state-changing operations.
@@ -143,8 +178,10 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         _unpause();
     }
 
-    /// @notice Triggers flush of pending rewards and penalties. Anyone can call to advance epoch.
+    /// @notice Advances the epoch: flushes pending rewards/penalties.
     function advanceEpoch() external nonReentrant whenNotPaused {
+        _stakeHeldK613();
+        if (block.timestamp < lastEpochFlushAt + epochDuration) revert EpochNotReady();
         if (totalDeposits > 0) _distributePending();
     }
 
@@ -156,7 +193,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     function _updateUser(address user) internal {
         _distributePending();
         uint256 bal = balanceOf[user];
-        uint256 accumulated = (bal * accRewardPerShare) / 1e18;
+        uint256 accumulated = (bal * accRewardPerShare) / PRECISION;
         if (accumulated > userRewardDebt[user]) {
             userPendingRewards[user] += (accumulated - userRewardDebt[user]);
         }
@@ -168,7 +205,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         if (pendingRewards > 0) {
             uint256 amount = pendingRewards;
             pendingRewards = 0;
-            accRewardPerShare += (amount * 1e18) / totalDeposits;
+            accRewardPerShare += (amount * PRECISION) / totalDeposits;
             emit RewardNotified(amount);
         }
         bool epochPassed = block.timestamp >= lastEpochFlushAt + epochDuration;
@@ -176,7 +213,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         if (shouldFlushPenalties) {
             uint256 amount = pendingPenalties;
             pendingPenalties = 0;
-            accRewardPerShare += (amount * 1e18) / totalDeposits;
+            accRewardPerShare += (amount * PRECISION) / totalDeposits;
             emit RewardNotified(amount);
             if (epochPassed) {
                 lastEpochFlushAt = block.timestamp;
@@ -190,15 +227,15 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         if (totalDeposits == 0) return userPendingRewards[account];
         uint256 accReward = accRewardPerShare;
         if (pendingRewards > 0) {
-            accReward += (pendingRewards * 1e18) / totalDeposits;
+            accReward += (pendingRewards * PRECISION) / totalDeposits;
         }
         bool epochPassed = block.timestamp >= lastEpochFlushAt + epochDuration;
         bool wouldFlushPenalties = pendingPenalties >= MIN_PENALTY_FLUSH || (pendingPenalties > 0 && epochPassed);
         if (wouldFlushPenalties) {
-            accReward += (pendingPenalties * 1e18) / totalDeposits;
+            accReward += (pendingPenalties * PRECISION) / totalDeposits;
         }
         uint256 bal = balanceOf[account];
-        uint256 accumulated = (bal * accReward) / 1e18;
+        uint256 accumulated = (bal * accReward) / PRECISION;
         uint256 pending = accumulated > userRewardDebt[account] ? accumulated - userRewardDebt[account] : 0;
         return userPendingRewards[account] + pending;
     }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.33;
+pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
@@ -129,6 +129,25 @@ contract StakingHandler is Test {
         vm.prank(actor);
         distributor.claim();
     }
+
+    /// @notice Notifies new rewards: mint K613, stake to get xK613, send xK613 to RD.
+    function notifyReward(uint256 rawAmount) external {
+        uint256 amount = bound(rawAmount, distributor.MIN_NOTIFY(), MAX_AMOUNT);
+        k613.mint(address(this), amount);
+        k613.approve(address(staking), amount);
+        staking.stake(amount);
+        xk613.transfer(address(distributor), amount);
+        distributor.notifyReward(amount);
+    }
+
+    function withdrawFromRD(uint256 rawAmount, uint256 actorSeed) external {
+        address actor = actors[actorSeed % actors.length];
+        uint256 bal = distributor.balanceOf(actor);
+        if (bal == 0) return;
+        uint256 amount = bound(rawAmount, 1, bal);
+        vm.prank(actor);
+        distributor.withdraw(amount);
+    }
 }
 
 contract InvariantStakingTest is StdInvariant, Test {
@@ -153,7 +172,7 @@ contract InvariantStakingTest is StdInvariant, Test {
         k613 = new K613(address(this));
         xk613 = new xK613(address(this));
         staking = new Staking(address(k613), address(xk613), LOCK_DURATION, PENALTY_BPS);
-        distributor = new RewardsDistributor(address(xk613), EPOCH_DURATION);
+        distributor = new RewardsDistributor(address(xk613), address(xk613), address(k613), EPOCH_DURATION);
 
         staking.setRewardsDistributor(address(distributor));
         distributor.setStaking(address(staking));
@@ -164,8 +183,40 @@ contract InvariantStakingTest is StdInvariant, Test {
 
         handler = new StakingHandler(k613, xk613, staking, distributor, actors, LOCK_DURATION);
         k613.setMinter(address(handler));
+        xk613.setTransferWhitelist(address(handler), true);
+        distributor.grantRole(distributor.REWARDS_NOTIFIER_ROLE(), address(handler));
 
         targetContract(address(handler));
+    }
+
+    /// @notice 1:1 backing: xK613 totalSupply == K613 backing in Staking.
+    function invariant_supplyMatchesBacking() public view {
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Staking solvency: balance == totalBacking (no direct K613 / fee-on-transfer).
+    function invariant_stakingSolvent() public view {
+        assertEq(k613.balanceOf(address(staking)), staking.totalBacking());
+    }
+
+    /// @notice accRewardPerShare never decreases.
+    uint256 private lastAccRewardPerShare;
+
+    function invariant_accNeverDecreases() public {
+        uint256 current = distributor.accRewardPerShare();
+        assertGe(current, lastAccRewardPerShare);
+        lastAccRewardPerShare = current;
+    }
+
+    /// @notice Claimable rewards (xK613) <= xK613 + K613 held by RD (K613 staked on claim).
+    function invariant_rewardsConservation() public view {
+        uint256 claimable = 0;
+        for (uint256 i = 0; i < actors.length; i++) {
+            claimable += distributor.pendingRewardsOf(actors[i]);
+        }
+        uint256 xBalance = xk613.balanceOf(address(distributor));
+        uint256 kBalance = k613.balanceOf(address(distributor));
+        assertLe(claimable, xBalance + kBalance + actors.length * 1e9);
     }
 
     function invariant_stakingHoldsAllDeposits() public view {
@@ -177,9 +228,17 @@ contract InvariantStakingTest is StdInvariant, Test {
         assertGe(k613.balanceOf(address(staking)), totalDeposits);
     }
 
-    /// RD balance >= totalDeposits (penalties minted to RD can exceed deposits)
+    /// @notice Explicit invariant: K613 balance == internal _totalBacking (no direct transfers / fee-on-transfer)
+    function invariant_backingIntegrity() public view {
+        assertTrue(staking.backingIntegrity());
+    }
+
+    /// RD xK613 + K613 >= totalDeposits (with rounding tolerance; K613 becomes xK613 on claim/advanceEpoch)
     function invariant_rdBalanceMatchesDeposits() public view {
-        assertGe(xk613.balanceOf(address(distributor)), distributor.totalDeposits());
+        uint256 xBalance = xk613.balanceOf(address(distributor));
+        uint256 kBalance = k613.balanceOf(address(distributor));
+        uint256 total = distributor.totalDeposits();
+        assertGe(xBalance + kBalance + 1e9, total);
     }
 
     function invariant_totalDepositsEqualsSumBalances() public view {

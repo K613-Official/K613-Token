@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.33;
+pragma solidity 0.8.34;
 
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
@@ -56,9 +56,9 @@ import {RewardsDistributor} from "./RewardsDistributor.sol";
  *
  * ECONOMIC NOTES
  * --------------
- * - Instant exit penalties (if enabled) are minted as xK613 and sent to the
+ * - Instant exit penalties (if enabled) are transferred as K613 to the
  *   RewardsDistributor, increasing future reward weight for remaining stakers.
- * - Underlying K613 principal is never implicitly redistributed.
+ * - Underlying K613 principal is never implicitly redistributed. xK613 is strictly 1:1 backed.
  *
  * This design preserves proven economic incentives from Shadow while favoring
  * auditability, explicit user intent, and minimal cross-contract coupling.
@@ -120,8 +120,6 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     event InstantExit(address indexed account, uint256 index, uint256 amount, uint256 penalty);
     /// @notice Emitted when rewards distributor is updated.
     event RewardsDistributorUpdated(address indexed distributor);
-    /// @notice Emitted when penalty K613 is withdrawn.
-    event PenaltiesWithdrawn(address indexed to, uint256 amount);
 
     /// @notice Initializes the staking contract.
     /// @param k613Token Address of the K613 token to be staked.
@@ -177,6 +175,19 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         return (r.amount, r.exitInitiatedAt);
     }
 
+    /// @notice Returns total K613 backing active positions (staked minus exited). For invariant: xK613.totalSupply() == totalBacking().
+    function totalBacking() external view returns (uint256) {
+        return _totalBacking;
+    }
+
+    /// @notice Invariant: K613 held by this contract must equal internal accounting (_totalBacking).
+    /// @dev Returns false if someone sent K613 directly, or token is fee-on-transfer, or accounting bug.
+    /// @return True if balance is exactly _totalBacking (no strict equality to satisfy static analysis).
+    function backingIntegrity() external view returns (bool) {
+        uint256 balance = k613.balanceOf(address(this));
+        return balance >= _totalBacking && balance <= _totalBacking;
+    }
+
     /// @notice Computes the sum of all amounts pending exit for a user.
     /// @param user Address of the user.
     /// @return sum Total amount pending exit across the user's queue.
@@ -187,7 +198,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         }
     }
 
-    /// @notice Converts K613 to xK613 1:1 and mints to caller (XShadow-style).
+    /// @notice Converts K613 to xK613 1:1 and mints to caller
     /// @param amount Amount of K613 to convert.
     function stake(uint256 amount) external nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
@@ -276,7 +287,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
 
         xk613.burnFrom(address(this), amount);
         if (penalty > 0) {
-            xk613.mint(address(rewardsDistributor), penalty);
+            k613.safeTransfer(address(rewardsDistributor), penalty);
             rewardsDistributor.addPendingPenalty(penalty);
         }
         k613.safeTransfer(msg.sender, payout);
@@ -295,24 +306,6 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
             s.exitQueue[index] = s.exitQueue[last];
         }
         s.exitQueue.pop();
-    }
-
-    /// @notice Withdraws accumulated penalty K613 (from instant exits) to a recipient.
-    /// @dev Only callable by DEFAULT_ADMIN_ROLE. Withdrawable = k613 balance minus total backing.
-    /// @param to Recipient address.
-    function withdrawPenalties(address to) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (to == address(0)) revert ZeroAddress();
-        uint256 balance = k613.balanceOf(address(this));
-        if (balance <= _totalBacking) return;
-        uint256 amount = balance - _totalBacking;
-        k613.safeTransfer(to, amount);
-        emit PenaltiesWithdrawn(to, amount);
-    }
-
-    /// @notice Returns the amount of penalty K613 available for withdrawal.
-    function withdrawablePenalties() external view returns (uint256) {
-        uint256 balance = k613.balanceOf(address(this));
-        return balance > _totalBacking ? balance - _totalBacking : 0;
     }
 
     /// @notice Pauses staking and exit operations.
