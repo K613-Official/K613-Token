@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.33;
+pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
 import {K613} from "../src/token/K613.sol";

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.33;
+pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
 import {IAccessControl} from "openzeppelin-contracts/contracts/access/IAccessControl.sol";
 import {K613} from "../src/token/K613.sol";
 import {xK613} from "../src/token/xK613.sol";
 import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
+import {Staking} from "../src/staking/Staking.sol";
 import {Treasury} from "../src/treasury/Treasury.sol";
 
 contract MockRouter {
@@ -41,6 +42,7 @@ contract TreasuryTest is Test {
 
     K613 private k613;
     xK613 private xk613;
+    Staking private staking;
     RewardsDistributor private distributor;
     Treasury private treasury;
 
@@ -49,12 +51,17 @@ contract TreasuryTest is Test {
     function setUp() public {
         k613 = new K613(address(this));
         xk613 = new xK613(address(this));
-        distributor = new RewardsDistributor(address(xk613), EPOCH);
-        treasury = new Treasury(address(k613), address(xk613), address(distributor));
+        staking = new Staking(address(k613), address(xk613), 7 days, 0);
+        distributor = new RewardsDistributor(address(xk613), address(xk613), address(k613), EPOCH);
+        treasury = new Treasury(address(k613), address(xk613), address(staking), address(distributor));
 
-        k613.mint(address(treasury), 1000 * ONE);
-        xk613.grantRole(xk613.MINTER_ROLE(), address(treasury));
+        xk613.setMinter(address(staking));
+        xk613.grantRole(xk613.MINTER_ROLE(), address(this));
         xk613.setTransferWhitelist(address(distributor), true);
+        xk613.setTransferWhitelist(address(treasury), true);
+        staking.setRewardsDistributor(address(distributor));
+        distributor.setStaking(address(staking));
+        k613.mint(address(treasury), 1000 * ONE);
         distributor.grantRole(distributor.REWARDS_NOTIFIER_ROLE(), address(treasury));
     }
 
@@ -121,8 +128,68 @@ contract TreasuryTest is Test {
         treasury.buyback(address(k613), address(0x1), 0, "", 0, false);
     }
 
+    function testBuyback_RouterNotWhitelistedReverts() public {
+        MockRouter router = new MockRouter(address(k613));
+        k613.mint(address(router), 100 * ONE);
+        bytes memory data = abi.encodeWithSelector(MockRouter.swapExactTokensForTokens.selector);
+        vm.expectRevert(Treasury.RouterNotWhitelisted.selector);
+        treasury.buyback(address(k613), address(router), 1, data, 0, false);
+    }
+
+    function testSetRouterWhitelist_OnlyAdmin() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        treasury.setRouterWhitelist(address(0x1), true);
+    }
+
+    function testSetRouterWhitelist_ZeroAddressReverts() public {
+        vm.expectRevert(Treasury.ZeroAddress.selector);
+        treasury.setRouterWhitelist(address(0), true);
+    }
+
+    function testSetRouterWhitelist_SuccessAndBuyback() public {
+        MockRouter router = new MockRouter(address(k613));
+        assertFalse(treasury.routerWhitelist(address(router)));
+        vm.expectEmit(true, true, false, true);
+        emit Treasury.RouterWhitelistUpdated(address(router), true);
+        treasury.setRouterWhitelist(address(router), true);
+        assertTrue(treasury.routerWhitelist(address(router)));
+        k613.mint(address(router), 100 * ONE);
+        bytes memory data = abi.encodeWithSelector(MockRouter.swapExactTokensForTokens.selector);
+        treasury.buyback(address(k613), address(router), 1, data, 1e18, false);
+
+        treasury.setRouterWhitelist(address(router), false);
+        assertFalse(treasury.routerWhitelist(address(router)));
+        vm.expectRevert(Treasury.RouterNotWhitelisted.selector);
+        treasury.buyback(address(k613), address(router), 1, data, 0, false);
+    }
+
+    function testGetWhitelistedRouters() public {
+        address[] memory empty = treasury.getWhitelistedRouters();
+        assertEq(empty.length, 0);
+
+        MockRouter r1 = new MockRouter(address(k613));
+        MockRouter r2 = new MockRouter(address(k613));
+        treasury.setRouterWhitelist(address(r1), true);
+        address[] memory one = treasury.getWhitelistedRouters();
+        assertEq(one.length, 1);
+        assertEq(one[0], address(r1));
+
+        treasury.setRouterWhitelist(address(r2), true);
+        address[] memory two = treasury.getWhitelistedRouters();
+        assertEq(two.length, 2);
+        assertEq(two[0], address(r1));
+        assertEq(two[1], address(r2));
+
+        treasury.setRouterWhitelist(address(r1), false);
+        address[] memory afterRemove = treasury.getWhitelistedRouters();
+        assertEq(afterRemove.length, 1);
+        assertEq(afterRemove[0], address(r2));
+    }
+
     function testBuyback_InsufficientOutputReverts() public {
         MockRouter router = new MockRouter(address(k613));
+        treasury.setRouterWhitelist(address(router), true);
         router.setShouldReturnInsufficient(true);
         k613.mint(address(router), 100 * ONE);
         bytes memory data = abi.encodeWithSelector(MockRouter.swapExactTokensForTokens.selector);
@@ -132,6 +199,7 @@ contract TreasuryTest is Test {
 
     function testBuyback_DistributeRewardsFalse() public {
         MockRouter router = new MockRouter(address(k613));
+        treasury.setRouterWhitelist(address(router), true);
         k613.mint(address(router), 100 * ONE);
         uint256 rdBalBefore = xk613.balanceOf(address(distributor));
         bytes memory data = abi.encodeWithSelector(MockRouter.swapExactTokensForTokens.selector);
@@ -149,6 +217,7 @@ contract TreasuryTest is Test {
 
     function testBuyback_PauseReverts() public {
         MockRouter router = new MockRouter(address(k613));
+        treasury.setRouterWhitelist(address(router), true);
         k613.mint(address(router), 100 * ONE);
         bytes memory data = abi.encodeWithSelector(MockRouter.swapExactTokensForTokens.selector);
         treasury.pause();
@@ -165,6 +234,7 @@ contract TreasuryTest is Test {
         distributor.deposit(1_000 * ONE);
 
         MockRouter router = new MockRouter(address(k613));
+        treasury.setRouterWhitelist(address(router), true);
         k613.mint(address(router), 100 * ONE);
         uint256 rdBalBefore = xk613.balanceOf(address(distributor));
         bytes memory data = abi.encodeWithSelector(MockRouter.swapExactTokensForTokens.selector);
@@ -175,6 +245,7 @@ contract TreasuryTest is Test {
 
     function testBuyback_BuybackFailed() public {
         MockRouter router = new MockRouter(address(k613));
+        treasury.setRouterWhitelist(address(router), true);
         router.setShouldFail(true);
         k613.mint(address(router), 100 * ONE);
         bytes memory data = abi.encodeWithSelector(MockRouter.swapExactTokensForTokens.selector);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.33;
+pragma solidity 0.8.34;
 
 import {Script, console} from "forge-std/Script.sol";
 import {K613} from "../src/token/K613.sol";
@@ -9,11 +9,17 @@ import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
 import {Treasury} from "../src/treasury/Treasury.sol";
 
 /// @title DeployK613
-/// @notice Deploys K613 staking stack to Arbitrum Sepolia testnet
+/// @notice Deploys K613 staking stack on Arbitrum Sepolia testnet.
 contract DeployK613 is Script {
     uint256 private constant LOCK_DURATION = 90 days;
     uint256 private constant EPOCH_DURATION = 7 days;
     uint256 private constant INSTANT_EXIT_PENALTY_BPS = 5000;
+
+    uint256 private constant ARBITRUM_SEPOLIA = 421_614;
+
+    // Uniswap on Arbitrum Sepolia
+    address private constant UNISWAP_SWAPROUTER02_ARB_SEPOLIA = 0x101F443B4d1b059569D643917553c771E1b9663E;
+    address private constant UNISWAP_UNIVERSAL_ROUTER_ARB_SEPOLIA = 0x4A7b5Da61326A6379179b40d00F57E5bbDC962c2;
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -30,24 +36,27 @@ contract DeployK613 is Script {
         xK613 xk613 = new xK613(deployer);
         console.log("xK613:", address(xk613));
 
-        // 3. RewardsDistributor
-        RewardsDistributor distributor = new RewardsDistributor(address(xk613), EPOCH_DURATION);
-        console.log("RewardsDistributor:", address(distributor));
-
-        // 4. Staking
+        // 4. Staking (before RD so RD can reference it for penalty stake)
         Staking staking = new Staking(address(k613), address(xk613), LOCK_DURATION, INSTANT_EXIT_PENALTY_BPS);
         console.log("Staking:", address(staking));
 
-        // 5. Treasury
-        Treasury treasury = new Treasury(address(k613), address(xk613), address(distributor));
+        // 3. RewardsDistributor (stakingToken = xK613, rewardToken = xK613; penalties staked to get xK613)
+        RewardsDistributor distributor =
+            new RewardsDistributor(address(xk613), address(xk613), address(k613), EPOCH_DURATION);
+        console.log("RewardsDistributor:", address(distributor));
+
+        // 5. Treasury (stakes K613→xK613, sends xK613 to RD for rewards)
+        Treasury treasury = new Treasury(address(k613), address(xk613), address(staking), address(distributor));
         console.log("Treasury:", address(treasury));
 
-        // xK613: Staking as minter, Treasury also needs mint
+        // xK613: only Staking as minter
         xk613.setMinter(address(staking));
-        xk613.grantRole(xk613.MINTER_ROLE(), address(treasury));
 
-        // xK613: whitelist RewardsDistributor for deposit/withdraw/claim transfers
+        // xK613: whitelist RewardsDistributor and Staking
         xk613.setTransferWhitelist(address(distributor), true);
+        xk613.setTransferWhitelist(address(staking), true);
+        // xK613: whitelist Treasury so it can send xK613 to RD (after staking K613)
+        xk613.setTransferWhitelist(address(treasury), true);
 
         // Staking -> RewardsDistributor
         staking.setRewardsDistributor(address(distributor));
@@ -58,10 +67,21 @@ contract DeployK613 is Script {
         // RewardsDistributor: Treasury gets REWARDS_NOTIFIER_ROLE
         distributor.grantRole(distributor.REWARDS_NOTIFIER_ROLE(), address(treasury));
 
+        // Treasury: whitelist Uniswap routers for buyback (by chain)
+        _whitelistRouters(treasury);
+
         vm.stopBroadcast();
 
         console.log("--- Deployment complete ---");
         _logSummary(address(k613), address(xk613), address(staking), address(distributor), address(treasury));
+    }
+
+    /// @notice Whitelists Uniswap SwapRouter02 and UniversalRouter for Arbitrum Sepolia
+    function _whitelistRouters(Treasury treasury) internal {
+        require(block.chainid == ARBITRUM_SEPOLIA, "DeployK613: Arbitrum Sepolia only");
+        treasury.setRouterWhitelist(UNISWAP_SWAPROUTER02_ARB_SEPOLIA, true);
+        treasury.setRouterWhitelist(UNISWAP_UNIVERSAL_ROUTER_ARB_SEPOLIA, true);
+        console.log("  Treasury: whitelisted SwapRouter02 + UniversalRouter (Arbitrum Sepolia)");
     }
 
     function _logSummary(address k613_, address xk613_, address staking_, address distributor_, address treasury_)

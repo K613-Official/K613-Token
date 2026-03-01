@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.33;
+pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
 import {K613} from "../src/token/K613.sol";
@@ -32,14 +32,14 @@ contract IntegrationTest is Test {
     function _deployFullStack(address deployer_) internal {
         k613 = new K613(deployer_);
         xk613 = new xK613(deployer_);
-        distributor = new RewardsDistributor(address(xk613), EPOCH_DURATION);
         staking = new Staking(address(k613), address(xk613), LOCK_DURATION, PENALTY_BPS);
-        treasury = new Treasury(address(k613), address(xk613), address(distributor));
+        distributor = new RewardsDistributor(address(xk613), address(xk613), address(k613), EPOCH_DURATION);
+        treasury = new Treasury(address(k613), address(xk613), address(staking), address(distributor));
 
         xk613.setMinter(address(staking));
-        xk613.grantRole(xk613.MINTER_ROLE(), address(treasury));
         xk613.setTransferWhitelist(address(distributor), true);
         xk613.setTransferWhitelist(address(staking), true);
+        xk613.setTransferWhitelist(address(treasury), true);
 
         staking.setRewardsDistributor(address(distributor));
         distributor.setStaking(address(staking));
@@ -50,7 +50,6 @@ contract IntegrationTest is Test {
 
     function test_FullStack_DeploySetup() public view {
         assertEq(xk613.minter(), address(staking));
-        assertTrue(xk613.hasRole(xk613.MINTER_ROLE(), address(treasury)));
         assertTrue(xk613.transferWhitelist(address(distributor)));
         assertTrue(xk613.transferWhitelist(address(staking)));
         assertEq(address(staking.rewardsDistributor()), address(distributor));
@@ -145,9 +144,10 @@ contract IntegrationTest is Test {
         assertEq(k613.balanceOf(alice), k613Before + 1_000 * ONE);
         assertEq(xk613.balanceOf(alice), xk613Before);
 
+        uint256 xk613BeforeClaim = xk613.balanceOf(alice);
         vm.prank(alice);
         distributor.claim();
-        assertEq(xk613.balanceOf(alice), xk613Before + 100 * ONE);
+        assertEq(xk613.balanceOf(alice), xk613BeforeClaim + 100 * ONE);
     }
 
     function test_FullStack_CompleteLifecycle_InstantExit() public {
@@ -211,7 +211,8 @@ contract IntegrationTest is Test {
         vm.prank(alice);
         distributor.withdraw(500 * ONE);
 
-        RewardsDistributor distributor2 = new RewardsDistributor(address(xk613), EPOCH_DURATION);
+        RewardsDistributor distributor2 =
+            new RewardsDistributor(address(xk613), address(xk613), address(k613), EPOCH_DURATION);
         distributor2.setStaking(address(staking));
         xk613.setTransferWhitelist(address(distributor2), true);
 
