@@ -128,7 +128,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     event ExitInitiated(address indexed account, uint256 index, uint256 amount, uint256 exitInitiatedAt);
     /// @notice Emitted when a user cancels an exit request
     event ExitCancelled(address indexed account, uint256 index);
-        /// @notice Emitted when a user exits after the lock period
+    /// @notice Emitted when a user exits after the lock period
     event Exited(address indexed account, uint256 index, uint256 amount);
     /// @notice Emitted when a user performs an instant exit
     event InstantExit(address indexed account, uint256 index, uint256 amount, uint256 penalty);

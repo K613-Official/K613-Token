@@ -35,7 +35,10 @@ contract IntegrationTest is Test {
             address stakingAddr = vm.envOr("STAKING_ADDRESS", address(0));
             address distributorAddr = vm.envOr("REWARDS_DISTRIBUTOR_ADDRESS", address(0));
             address treasuryAddr = vm.envOr("TREASURY_ADDRESS", address(0));
-            if (xk613Addr != address(0) && stakingAddr != address(0) && distributorAddr != address(0) && treasuryAddr != address(0)) {
+            if (
+                xk613Addr != address(0) && stakingAddr != address(0) && distributorAddr != address(0)
+                    && treasuryAddr != address(0)
+            ) {
                 _attachDeployed(k613Addr, xk613Addr, stakingAddr, distributorAddr, treasuryAddr);
                 useDeployed = true;
                 deployer = vm.envOr("DEPLOYER_ADDRESS", address(this));
@@ -46,7 +49,7 @@ contract IntegrationTest is Test {
         useDeployed = false;
     }
 
-    /// @dev Attach to deployed contracts when all five env vars are set 
+    /// @dev Attach to deployed contracts when all five env vars are set
     function _attachDeployed(
         address k613Addr,
         address xk613Addr,
@@ -61,7 +64,7 @@ contract IntegrationTest is Test {
         treasury = Treasury(treasuryAddr);
     }
 
-    /// @dev Lock duration: from contract on fork 
+    /// @dev Lock duration: from contract on fork
     function _lockDuration() internal view returns (uint256) {
         return useDeployed ? staking.lockDuration() : LOCK_DURATION;
     }

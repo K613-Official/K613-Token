@@ -49,7 +49,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     uint256 private constant PRECISION = 1e18;
     /// @notice Minimum penalty flush amount to avoid dust rounding
     uint256 public constant MIN_PENALTY_FLUSH = 1e18;
-        /// @notice Minimum first deposit to prevent first-depositor griefing
+    /// @notice Minimum first deposit to prevent first-depositor griefing
     uint256 public constant MIN_INITIAL_DEPOSIT = 1e12;
     /// @notice Minimum amount per notifyReward to avoid precision loss and notify spam
     uint256 public constant MIN_NOTIFY = 1e12;
@@ -79,7 +79,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     address public staking;
 
     /// @notice Emitted when a user claims rewards
-        event Claimed(address indexed account, uint256 amount);
+    event Claimed(address indexed account, uint256 amount);
     /// @notice Emitted when rewards are notified
     event RewardNotified(uint256 amount);
     /// @notice Emitted when the staking contract is updated
