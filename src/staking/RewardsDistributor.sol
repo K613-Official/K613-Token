@@ -13,27 +13,33 @@ interface IStaking {
 }
 
 /// @title RewardsDistributor
-/// @notice Users deposit xK613 (stakingToken) to earn rewards in xK613 (rewardToken). Claim anytime. Penalties from instant exit are staked to get xK613, then distributed. Rewards can be converted to K613 via Staking instant exit (50% penalty).
+/// @notice Users deposit xK613 (stakingToken) to earn rewards in xK613 (rewardToken). Claim anytime. Penalties from instant exit are staked to get xK613, then distributed. Rewards can be converted to K613 via Staking instant exit (50% penalty)
 contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
-
+    /// @notice Thrown when a zero address is provided
     error ZeroAddress();
+    /// @notice Thrown when a zero amount is provided
     error ZeroAmount();
+    /// @notice Thrown when a user has no rewards to claim
     error NoRewards();
+    /// @notice Thrown when a user has insufficient balance
     error InsufficientBalance();
+    /// @notice Thrown when an invalid epoch duration is provided
     error InvalidEpochDuration();
+    /// @notice Thrown when a minimum initial deposit is not met
     error MinimumInitialDeposit();
+    /// @notice Thrown when a minimum notify amount is not met
     error MinimumNotify();
-    /// @notice Thrown when advanceEpoch() is called before the current epoch has ended.
+    /// @notice Thrown when advanceEpoch() is called before the current epoch has ended
     error EpochNotReady();
-    /// @notice Thrown when claim() is called while the user has an active exit vesting in Staking.
+    /// @notice Thrown when claim() is called while the user has an active exit vesting in Staking
     error ExitVestingActive();
 
-    /// @notice Staking token (xK613): users deposit this to earn rewards.
+    /// @notice Staking token (xK613): users deposit this to earn rewards
     IERC20 public immutable stakingToken;
-    /// @notice Reward token (xK613): rewards are paid out in xK613. Same token as stakingToken.
+    /// @notice Reward token (xK613): rewards are paid out in xK613. Same token as stakingToken
     IERC20 public immutable rewardToken;
-    /// @notice K613 token; used to stake penalty K613 in Staking to get xK613 for distribution.
+    /// @notice K613 token; used to stake penalty K613 in Staking to get xK613 for distribution
     IERC20 public immutable k613;
 
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
@@ -41,39 +47,50 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Scale for accRewardPerShare and reward math
     uint256 private constant PRECISION = 1e18;
+    /// @notice Minimum penalty flush amount to avoid dust rounding
     uint256 public constant MIN_PENALTY_FLUSH = 1e18;
-    /// @notice Minimum first deposit to prevent first-depositor griefing.
+        /// @notice Minimum first deposit to prevent first-depositor griefing
     uint256 public constant MIN_INITIAL_DEPOSIT = 1e12;
-    /// @notice Minimum amount per notifyReward to avoid precision loss and notify spam.
+    /// @notice Minimum amount per notifyReward to avoid precision loss and notify spam
     uint256 public constant MIN_NOTIFY = 1e12;
 
-    /// @notice Epoch duration in seconds. Penalties flush at epoch boundary even if below threshold.
+    /// @notice Epoch duration in seconds. Penalties flush at epoch boundary even if below threshold
     uint256 public immutable epochDuration;
-    /// @notice Timestamp when penalties were last flushed at epoch boundary.
+    /// @notice Timestamp when penalties were last flushed at epoch boundary
     uint256 public lastEpochFlushAt;
 
-    /// @notice Global accumulated rewards per share, scaled by 1e18.
+    /// @notice Global accumulated rewards per share, scaled by 1e18
     uint256 public accRewardPerShare;
-    /// @notice Rewards notified but not yet distributed (when totalDeposits was 0).
+    /// @notice Rewards notified but not yet distributed (when totalDeposits was 0)
     uint256 public pendingRewards;
-    /// @notice Penalties from instant exit; flushed when >= MIN_PENALTY_FLUSH to avoid dust rounding.
+    /// @notice Penalties from instant exit; flushed when >= MIN_PENALTY_FLUSH to avoid dust rounding
     uint256 public pendingPenalties;
-    /// @notice Total stakingToken (xK613) deposited by all users.
+    /// @notice Total stakingToken (xK613) deposited by all users
     uint256 public totalDeposits;
 
+    /// @notice The amount of stakingToken (xK613) held by a user
     mapping(address => uint256) public balanceOf;
+    /// @notice The amount of rewards owed to a user
     mapping(address => uint256) public userRewardDebt;
+    /// @notice The amount of rewards pending for a user
     mapping(address => uint256) public userPendingRewards;
 
-    /// @notice Staking contract; receives REWARDS_NOTIFIER_ROLE for penalty rewards.
+    /// @notice Staking contract; receives REWARDS_NOTIFIER_ROLE for penalty rewards
     address public staking;
 
-    event Claimed(address indexed account, uint256 amount);
+    /// @notice Emitted when a user claims rewards
+        event Claimed(address indexed account, uint256 amount);
+    /// @notice Emitted when rewards are notified
     event RewardNotified(uint256 amount);
+    /// @notice Emitted when the staking contract is updated
     event StakingUpdated(address indexed staking);
+    /// @notice Emitted when a user deposits stakingToken (xK613)
     event Deposited(address indexed account, uint256 amount);
+    /// @notice Emitted when a user withdraws stakingToken (xK613)
     event Withdrawn(address indexed account, uint256 amount);
+    /// @notice Emitted when penalties are added
     event PenaltyAdded(uint256 amount);
+    /// @notice Emitted when the epoch is advanced
     event EpochAdvanced(uint256 timestamp);
 
     constructor(address stakingToken_, address rewardToken_, address k613_, uint256 epochDuration_) {
@@ -100,7 +117,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         emit StakingUpdated(staking_);
     }
 
-    /// @notice Deposits xK613 to earn rewards. Caller must approve this contract first.
+    /// @notice Deposits xK613 to earn rewards. Caller must approve this contract first
     function deposit(uint256 amount) external nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
         if (totalDeposits == 0 && amount < MIN_INITIAL_DEPOSIT) revert MinimumInitialDeposit();

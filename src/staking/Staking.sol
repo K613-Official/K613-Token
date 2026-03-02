@@ -67,24 +67,38 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 public constant MAX_EXIT_REQUESTS = 10;
+    uint256 public constant MAX_BASIS_POINTS = 10_000;
 
+    /// @notice Thrown when a zero address is passed where a non-zero address is required.
     error ZeroAddress();
+    /// @notice Thrown when a zero amount is passed where a positive amount is required.
     error ZeroAmount();
+    /// @notice Thrown when attempting to exit before the lock duration has passed.
     error Locked();
+    /// @notice Thrown when attempting an instant exit after the lock duration has already passed.
     error Unlocked();
+    /// @notice Thrown when the instant exit penalty basis points exceed MAX_BASIS_POINTS.
     error InvalidBps();
+    /// @notice Thrown when an instant exit with a non-zero penalty is attempted without a rewards distributor set.
     error RewardsDistributorNotSet();
+    /// @notice Thrown when the caller does not hold enough xK613 to cover the requested exit amount.
     error InsufficientxK613();
+    /// @notice Thrown when there is no remaining staked amount available to initiate a new exit request.
     error NothingToInitiate();
+    /// @notice Thrown when an invalid exit queue index is provided.
     error InvalidExitIndex();
+    /// @notice Thrown when the user's exit queue has reached MAX_EXIT_REQUESTS.
     error ExitQueueFull();
+    /// @notice Thrown when the requested exit amount exceeds the user’s staked balance.
     error AmountExceedsStake();
 
+    /// @notice Exit request struct
     struct ExitRequest {
         uint256 amount;
         uint256 exitInitiatedAt;
     }
 
+    /// @notice User state struct
     struct UserState {
         uint256 amount;
         ExitRequest[] exitQueue;
@@ -92,33 +106,33 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
 
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
-    /// @notice Underlying token being staked.
+    /// @notice Underlying token being staked
     IERC20 public immutable k613;
-    /// @notice xK613 token minted on stake and burned on exit.
+    /// @notice xK613 token minted on stake and burned on exit
     xK613 public immutable xk613;
 
-    /// @notice Lock duration for standard exits.
+    /// @notice Lock duration for standard exits
     uint256 public immutable lockDuration;
-    /// @notice Penalty, in basis points, applied on instant exits before `lockDuration`.
+    /// @notice Penalty, in basis points, applied on instant exits before `lockDuration`
     uint256 public immutable instantExitPenaltyBps;
 
-    /// @notice Rewards distributor responsible for external reward accounting.
+    /// @notice Rewards distributor responsible for external reward accounting
     RewardsDistributor public rewardsDistributor;
     mapping(address => UserState) private _userState;
-    /// @notice Total K613 backing active positions (staked minus exited).
+    /// @notice Total K613 backing active positions (staked minus exited)
     uint256 private _totalBacking;
 
-    /// @notice Emitted when a user stakes K613.
+    /// @notice Emitted when a user stakes K613
     event Staked(address indexed account, uint256 amount);
-    /// @notice Emitted when a user initiates an exit request.
+    /// @notice Emitted when a user initiates an exit request
     event ExitInitiated(address indexed account, uint256 index, uint256 amount, uint256 exitInitiatedAt);
-    /// @notice Emitted when a user cancels an exit request.
+    /// @notice Emitted when a user cancels an exit request
     event ExitCancelled(address indexed account, uint256 index);
-    /// @notice Emitted when a user exits after the lock period.
+        /// @notice Emitted when a user exits after the lock period
     event Exited(address indexed account, uint256 index, uint256 amount);
-    /// @notice Emitted when a user performs an instant exit.
+    /// @notice Emitted when a user performs an instant exit
     event InstantExit(address indexed account, uint256 index, uint256 amount, uint256 penalty);
-    /// @notice Emitted when rewards distributor is updated.
+    /// @notice Emitted when rewards distributor is updated
     event RewardsDistributorUpdated(address indexed distributor);
 
     /// @notice Initializes the staking contract.
@@ -128,7 +142,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     /// @param instantExitPenaltyBps_ Penalty in basis points for instant exits.
     constructor(address k613Token, address xk613Token, uint256 lockDuration_, uint256 instantExitPenaltyBps_) {
         if (k613Token == address(0) || xk613Token == address(0)) revert ZeroAddress();
-        if (instantExitPenaltyBps_ > 10_000) revert InvalidBps();
+        if (instantExitPenaltyBps_ > MAX_BASIS_POINTS) revert InvalidBps();
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(PAUSER_ROLE, msg.sender);
         k613 = IERC20(k613Token);
@@ -140,6 +154,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     /// @notice Sets the rewards distributor contract. Pass address(0) to disable; instant exit with penalty will revert until set.
     /// @param distributor Address of the rewards distributor.
     function setRewardsDistributor(address distributor) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (distributor == address(0)) revert ZeroAddress();
         rewardsDistributor = RewardsDistributor(distributor);
         emit RewardsDistributorUpdated(distributor);
     }
@@ -193,7 +208,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     /// @return sum Total amount pending exit across the user's queue.
     function _exitPendingSum(address user) internal view returns (uint256 sum) {
         ExitRequest[] storage q = _userState[user].exitQueue;
-        for (uint256 i = 0; i < q.length; i++) {
+        for (uint256 i = 0; i < q.length; ++i) {
             sum += q[i].amount;
         }
     }
@@ -276,7 +291,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         if (block.timestamp >= req.exitInitiatedAt + lockDuration) revert Unlocked();
 
         uint256 amount = req.amount;
-        uint256 penalty = (amount * instantExitPenaltyBps) / 10_000;
+        uint256 penalty = (amount * instantExitPenaltyBps) / MAX_BASIS_POINTS;
         uint256 payout = amount - penalty;
 
         if (penalty > 0 && address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();

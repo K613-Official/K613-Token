@@ -16,11 +16,13 @@ contract K613Test is Test {
         token = new K613(minter);
     }
 
+    /// @notice testConstructorSetsMinter: Constructor sets minter and grants DEFAULT_ADMIN_ROLE to deployer.
     function testConstructorSetsMinter() public view {
         assertEq(token.minter(), minter);
         assertTrue(token.hasRole(token.DEFAULT_ADMIN_ROLE(), owner));
     }
 
+    /// @notice testSetMinterOnlyOwner: setMinter from non-admin reverts; admin can set new minter.
     function testSetMinterOnlyOwner() public {
         vm.prank(alice);
         vm.expectRevert();
@@ -30,11 +32,13 @@ contract K613Test is Test {
         assertEq(token.minter(), alice);
     }
 
+    /// @notice testSetMinterRejectsZero: setMinter(address(0)) reverts with ZeroAddress.
     function testSetMinterRejectsZero() public {
         vm.expectRevert(K613.ZeroAddress.selector);
         token.setMinter(address(0));
     }
 
+    /// @notice testMintOnlyMinter: mint from non-minter reverts with OnlyMinter; minter can mint and balance/totalSupply update.
     function testMintOnlyMinter() public {
         vm.prank(alice);
         vm.expectRevert(K613.OnlyMinter.selector);
@@ -46,6 +50,7 @@ contract K613Test is Test {
         assertEq(token.totalSupply(), 2e18);
     }
 
+    /// @notice testBurnOnlyMinter: burnFrom from non-minter reverts with OnlyMinter; minter can burn and balance/totalSupply update.
     function testBurnOnlyMinter() public {
         vm.prank(minter);
         token.mint(alice, 3e18);
@@ -60,6 +65,7 @@ contract K613Test is Test {
         assertEq(token.totalSupply(), 2e18);
     }
 
+    /// @notice testTransfer_PauseBlocks: When paused, transfer reverts (generic revert from Pausable).
     function testTransfer_PauseBlocks() public {
         vm.prank(minter);
         token.mint(alice, 2e18);
