@@ -39,6 +39,7 @@ contract StakingTest is Test {
         k613.mint(bob, 10_000 * ONE);
     }
 
+    /// @notice test_Stake_MintsxK613ToUser: stake() transfers K613 to contract and mints 1:1 xK613 to user; deposits() and balances match.
     function test_Stake_MintsxK613ToUser() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -51,12 +52,14 @@ contract StakingTest is Test {
         assertEq(k613.balanceOf(address(staking)), 100 * ONE);
     }
 
+    /// @notice test_Stake_ZeroReverts: stake(0) reverts with ZeroAmount.
     function test_Stake_ZeroReverts() public {
         vm.prank(alice);
         vm.expectRevert(Staking.ZeroAmount.selector);
         staking.stake(0);
     }
 
+    /// @notice test_Stake_CanAddMore: Multiple stakes from same user accumulate; backingIntegrity holds.
     function test_Stake_CanAddMore() public {
         vm.startPrank(alice);
         k613.approve(address(staking), 200 * ONE);
@@ -70,6 +73,7 @@ contract StakingTest is Test {
         assertTrue(staking.backingIntegrity());
     }
 
+    /// @notice test_BackingIntegrity_HoldsAfterStakeAndExit: backingIntegrity holds after stake and after full exit (initiateExit → wait lock → exit).
     function test_BackingIntegrity_HoldsAfterStakeAndExit() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -87,6 +91,7 @@ contract StakingTest is Test {
         assertTrue(staking.backingIntegrity());
     }
 
+    /// @notice test_InitiateExit_StartsCountdown: initiateExit creates queue entry with exitInitiatedAt; exitRequestAt returns correct amount and timestamp.
     function test_InitiateExit_StartsCountdown() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -104,12 +109,14 @@ contract StakingTest is Test {
         assertEq(xk613.balanceOf(alice), 0);
     }
 
+    /// @notice test_InitiateExit_NothingStakedReverts: initiateExit with no stake reverts with NothingToInitiate.
     function test_InitiateExit_NothingStakedReverts() public {
         vm.prank(alice);
         vm.expectRevert(Staking.NothingToInitiate.selector);
         staking.initiateExit(1);
     }
 
+    /// @notice test_InitiateExit_AmountExceedsReverts: initiateExit(amount) exceeding available stake reverts with AmountExceedsStake.
     function test_InitiateExit_AmountExceedsReverts() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -121,6 +128,7 @@ contract StakingTest is Test {
         staking.initiateExit(101 * ONE);
     }
 
+    /// @notice test_InitiateExit_InsufficientxK613Reverts: initiateExit when user's xK613 is in RD (balance 0) reverts with InsufficientxK613.
     function test_InitiateExit_InsufficientxK613Reverts() public {
         xk613.setTransferWhitelist(address(bob), true);
         vm.prank(alice);
@@ -138,6 +146,7 @@ contract StakingTest is Test {
         staking.initiateExit(100 * ONE);
     }
 
+    /// @notice test_CancelExit_ResetsQueue: cancelExit returns xK613 to user and removes request from queue; queue length and balances correct.
     function test_CancelExit_ResetsQueue() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -155,6 +164,7 @@ contract StakingTest is Test {
         assertEq(xk613.balanceOf(alice), 100 * ONE);
     }
 
+    /// @notice test_CancelExit_NotInitiatedReverts: cancelExit with invalid index reverts with InvalidExitIndex.
     function test_CancelExit_NotInitiatedReverts() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -166,6 +176,7 @@ contract StakingTest is Test {
         staking.cancelExit(0);
     }
 
+    /// @notice test_Exit_WithoutInitiateReverts: exit(index) with empty queue or invalid index reverts with InvalidExitIndex.
     function test_Exit_WithoutInitiateReverts() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -178,6 +189,7 @@ contract StakingTest is Test {
         staking.exit(0);
     }
 
+    /// @notice test_Exit_BeforeLockReverts: exit(0) before lock duration reverts with Locked.
     function test_Exit_BeforeLockReverts() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -194,6 +206,7 @@ contract StakingTest is Test {
         staking.exit(0);
     }
 
+    /// @notice test_Exit_AfterLockSuccess: After lock, exit(0) burns xK613 and returns K613 to user; backingIntegrity holds.
     function test_Exit_AfterLockSuccess() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -214,6 +227,7 @@ contract StakingTest is Test {
         assertEq(k613.balanceOf(alice), aliceBefore + 100 * ONE);
     }
 
+    /// @notice test_Exit_ExactLockBoundary: exit at exactly lockDuration boundary succeeds (timestamp == exitInitiatedAt + lockDuration).
     function test_Exit_ExactLockBoundary() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -231,6 +245,7 @@ contract StakingTest is Test {
         assertEq(k613.balanceOf(alice), before + 100 * ONE);
     }
 
+    /// @notice test_InstantExit_WithoutInitiateReverts: instantExit with no queue reverts with InvalidExitIndex.
     function test_InstantExit_WithoutInitiateReverts() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -242,6 +257,7 @@ contract StakingTest is Test {
         staking.instantExit(0);
     }
 
+    /// @notice test_InstantExit_AfterLockReverts: instantExit after lock has passed reverts with Unlocked.
     function test_InstantExit_AfterLockReverts() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -258,11 +274,13 @@ contract StakingTest is Test {
         staking.instantExit(0);
     }
 
+    /// @notice test_SetRewardsDistributor_AllowsZero: setRewardsDistributor(address(0)) is allowed (disables penalty destination).
     function test_SetRewardsDistributor_AllowsZero() public {
         staking.setRewardsDistributor(address(0));
         assertEq(address(staking.rewardsDistributor()), address(0));
     }
 
+    /// @notice test_InstantExit_RevertsWhenDistributorZeroAndPenalty: instantExit with penalty and no rewards distributor set reverts with RewardsDistributorNotSet.
     function test_InstantExit_RevertsWhenDistributorZeroAndPenalty() public {
         staking.setRewardsDistributor(address(0));
         vm.prank(alice);
@@ -280,6 +298,7 @@ contract StakingTest is Test {
         staking.instantExit(0);
     }
 
+    /// @notice test_InstantExit_PenaltyToDistributor: instantExit sends penalty K613 to RewardsDistributor and addPendingPenalty is called.
     function test_InstantExit_PenaltyToDistributor() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -301,6 +320,7 @@ contract StakingTest is Test {
         assertEq(k613.balanceOf(alice), aliceBefore + payout);
     }
 
+    /// @notice test_InstantExit_PartialRequest: User has multiple exit requests; instantExit on one leaves others in queue and partial stake remains.
     function test_InstantExit_PartialRequest() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -323,6 +343,7 @@ contract StakingTest is Test {
         assertEq(k613.balanceOf(alice), before + payout);
     }
 
+    /// @notice test_InstantExit_FullClearsQueue: instantExit on only request clears queue; user receives payout (amount - penalty).
     function test_InstantExit_FullClearsQueue() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -342,6 +363,7 @@ contract StakingTest is Test {
         assertEq(staking.exitQueueLength(alice), 0);
     }
 
+    /// @notice test_StakeAfterCancelExit: After cancelExit user can stake again; state and balances consistent.
     function test_StakeAfterCancelExit() public {
         vm.prank(alice);
         k613.approve(address(staking), 200 * ONE);
@@ -362,6 +384,7 @@ contract StakingTest is Test {
         assertEq(staking.exitQueueLength(alice), 0);
     }
 
+    /// @notice test_ExitAfterCancelAndReinitiate: Cancel one exit, re-initiate same amount, wait lock, exit; user gets K613 back and backingIntegrity holds.
     function test_ExitAfterCancelAndReinitiate() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -385,6 +408,7 @@ contract StakingTest is Test {
         assertEq(k613.balanceOf(alice), before + 100 * ONE);
     }
 
+    /// @notice test_ExitQueue_MultipleRequests: Multiple initiateExit entries; exit in order or mixed; queue length and amounts correct.
     function test_ExitQueue_MultipleRequests() public {
         vm.prank(alice);
         k613.approve(address(staking), 200 * ONE);
@@ -414,6 +438,7 @@ contract StakingTest is Test {
         assertEq(amount, 50 * ONE);
     }
 
+    /// @notice test_InstantExit_PenaltyGoesToRewardsDistributor: instantExit penalty is transferred to RD and pendingPenalties increases.
     function test_InstantExit_PenaltyGoesToRewardsDistributor() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -433,6 +458,7 @@ contract StakingTest is Test {
         assertEq(k613.balanceOf(address(distributor)), rdBefore + penalty);
     }
 
+    /// @notice test_Pause_BlocksStake: When Staking is paused, stake() reverts.
     function test_Pause_BlocksStake() public {
         staking.pause();
 
@@ -443,6 +469,7 @@ contract StakingTest is Test {
         staking.stake(100 * ONE);
     }
 
+    /// @notice test_Pause_BlocksExit: When Staking is paused, exit() reverts.
     function test_Pause_BlocksExit() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -461,6 +488,7 @@ contract StakingTest is Test {
         staking.exit(0);
     }
 
+    /// @notice test_InitiateExit_ExitQueueFull: initiateExit when queue has MAX_EXIT_REQUESTS reverts with ExitQueueFull.
     function test_InitiateExit_ExitQueueFull() public {
         vm.prank(alice);
         k613.approve(address(staking), 1_100 * ONE);
@@ -477,6 +505,7 @@ contract StakingTest is Test {
         staking.initiateExit(100 * ONE);
     }
 
+    /// @notice test_InstantExit_PenaltyZeroBps: When instantExitPenaltyBps is 0, instantExit pays no penalty and full amount to user (no RD needed).
     function test_InstantExit_PenaltyZeroBps() public {
         xK613 freshXk = new xK613(address(this));
         Staking noPenaltyStaking = new Staking(address(k613), address(freshXk), LOCK_DURATION, 0);
@@ -499,6 +528,7 @@ contract StakingTest is Test {
         assertEq(k613.balanceOf(alice), before + 100 * ONE);
     }
 
+    /// @notice test_Pause_BlocksInitiateExit: When Staking is paused, initiateExit() reverts.
     function test_Pause_BlocksInitiateExit() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -512,6 +542,7 @@ contract StakingTest is Test {
         staking.initiateExit(100 * ONE);
     }
 
+    /// @notice test_Pause_BlocksCancelExit: When Staking is paused, cancelExit() reverts.
     function test_Pause_BlocksCancelExit() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -527,6 +558,7 @@ contract StakingTest is Test {
         staking.cancelExit(0);
     }
 
+    /// @notice test_Pause_BlocksInstantExit: When Staking is paused, instantExit() reverts.
     function test_Pause_BlocksInstantExit() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -543,11 +575,13 @@ contract StakingTest is Test {
         staking.instantExit(0);
     }
 
+    /// @notice test_InvalidBps_Reverts: Constructor with instantExitPenaltyBps > 10_000 reverts with InvalidBps.
     function test_InvalidBps_Reverts() public {
         vm.expectRevert(Staking.InvalidBps.selector);
         new Staking(address(k613), address(xk613), LOCK_DURATION, 10_001);
     }
 
+    /// @notice test_ExitQueue_SwapRemove_IndexIntegrity: After swap-remove (cancel/exit), remaining queue indices are valid and amounts sum correctly.
     function test_ExitQueue_SwapRemove_IndexIntegrity() public {
         vm.prank(alice);
         k613.approve(address(staking), 300 * ONE);
@@ -577,6 +611,7 @@ contract StakingTest is Test {
         assertEq(staking.exitQueueLength(alice), 1);
     }
 
+    /// @notice test_InstantExit_Multiple_PenaltiesGoToRewardsDistributor: Multiple instant exits; total penalty sent to RD equals sum of individual penalties.
     function test_InstantExit_Multiple_PenaltiesGoToRewardsDistributor() public {
         vm.prank(alice);
         k613.approve(address(staking), 300 * ONE);

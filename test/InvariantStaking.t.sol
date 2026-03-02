@@ -35,6 +35,7 @@ contract StakingHandler is Test {
         lockDuration = lockDuration_;
     }
 
+    /// @notice stake: Random actor stakes a bounded amount of K613 (mint + approve + stake); first stake respects MIN_INITIAL_DEPOSIT.
     function stake(uint256 rawAmount, uint256 actorSeed) external {
         uint256 minStake = distributor.totalDeposits() == 0 ? distributor.MIN_INITIAL_DEPOSIT() : 1;
         uint256 amount = bound(rawAmount, minStake, MAX_AMOUNT);
@@ -47,6 +48,7 @@ contract StakingHandler is Test {
         vm.stopPrank();
     }
 
+    /// @notice depositToRD: Random actor deposits a bounded amount of xK613 to RewardsDistributor; skips if balance 0 or below min.
     function depositToRD(uint256 rawAmount, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
         uint256 balance = xk613.balanceOf(actor);
@@ -61,6 +63,7 @@ contract StakingHandler is Test {
         vm.stopPrank();
     }
 
+    /// @notice initiateExit: Random actor initiates exit for a bounded amount; skips if no stake, queue full, or insufficient xK613 balance.
     function initiateExit(uint256 rawAmount, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
         (uint256 deposited,) = staking.deposits(actor);
@@ -82,6 +85,7 @@ contract StakingHandler is Test {
         vm.stopPrank();
     }
 
+    /// @notice cancelExit: Random actor cancels one exit request by index; no-op if queue empty.
     function cancelExit(uint256 indexSeed, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
         uint256 queueLen = staking.exitQueueLength(actor);
@@ -92,6 +96,7 @@ contract StakingHandler is Test {
         staking.cancelExit(index);
     }
 
+    /// @notice instantExit: Random actor performs instant exit on one queue entry; warps time back if already unlocked so instant path is taken.
     function instantExit(uint256 indexSeed, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
         uint256 queueLen = staking.exitQueueLength(actor);
@@ -107,6 +112,7 @@ contract StakingHandler is Test {
         staking.instantExit(index);
     }
 
+    /// @notice exit: Random actor performs normal exit on one queue entry; warps time forward if still locked so exit succeeds.
     function exit(uint256 indexSeed, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
         uint256 queueLen = staking.exitQueueLength(actor);
@@ -140,6 +146,7 @@ contract StakingHandler is Test {
         distributor.notifyReward(amount);
     }
 
+    /// @notice withdrawFromRD: Random actor withdraws a bounded amount of xK613 from RewardsDistributor; no-op if balance 0.
     function withdrawFromRD(uint256 rawAmount, uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
         uint256 bal = distributor.balanceOf(actor);
@@ -189,26 +196,26 @@ contract InvariantStakingTest is StdInvariant, Test {
         targetContract(address(handler));
     }
 
-    /// @notice 1:1 backing: xK613 totalSupply == K613 backing in Staking.
+    /// @notice invariant_supplyMatchesBacking: xK613 totalSupply always equals K613 backing in Staking (1:1 backing).
     function invariant_supplyMatchesBacking() public view {
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
-    /// @notice Staking solvency: balance == totalBacking (no direct K613 / fee-on-transfer).
+    /// @notice invariant_stakingSolvent: Staking's K613 balance equals totalBacking (no direct transfers or fee-on-transfer).
     function invariant_stakingSolvent() public view {
         assertEq(k613.balanceOf(address(staking)), staking.totalBacking());
     }
 
-    /// @notice accRewardPerShare never decreases.
     uint256 private lastAccRewardPerShare;
 
+    /// @notice invariant_accNeverDecreases: accRewardPerShare in RewardsDistributor never decreases across handler runs.
     function invariant_accNeverDecreases() public {
         uint256 current = distributor.accRewardPerShare();
         assertGe(current, lastAccRewardPerShare);
         lastAccRewardPerShare = current;
     }
 
-    /// @notice Claimable rewards (xK613) <= xK613 + K613 held by RD (K613 staked on claim).
+    /// @notice invariant_rewardsConservation: Sum of pendingRewardsOf all actors is at most RD's xK613 + K613 balance (plus rounding tolerance).
     function invariant_rewardsConservation() public view {
         uint256 claimable = 0;
         for (uint256 i = 0; i < actors.length; i++) {
@@ -219,6 +226,7 @@ contract InvariantStakingTest is StdInvariant, Test {
         assertLe(claimable, xBalance + kBalance + actors.length * 1e9);
     }
 
+    /// @notice invariant_stakingHoldsAllDeposits: Staking's K613 balance is at least the sum of all users' deposited amounts.
     function invariant_stakingHoldsAllDeposits() public view {
         uint256 totalDeposits = 0;
         for (uint256 i = 0; i < actors.length; i++) {
@@ -228,12 +236,12 @@ contract InvariantStakingTest is StdInvariant, Test {
         assertGe(k613.balanceOf(address(staking)), totalDeposits);
     }
 
-    /// @notice Explicit invariant: K613 balance == internal _totalBacking (no direct transfers / fee-on-transfer)
+    /// @notice invariant_backingIntegrity: Staking.backingIntegrity() is true (K613 balance equals _totalBacking; no direct transfers or fee-on-transfer).
     function invariant_backingIntegrity() public view {
         assertTrue(staking.backingIntegrity());
     }
 
-    /// RD xK613 + K613 >= totalDeposits (with rounding tolerance; K613 becomes xK613 on claim/advanceEpoch)
+    /// @notice invariant_rdBalanceMatchesDeposits: RewardsDistributor's xK613 + K613 balance is at least totalDeposits (with rounding tolerance; K613 becomes xK613 on claim/advanceEpoch).
     function invariant_rdBalanceMatchesDeposits() public view {
         uint256 xBalance = xk613.balanceOf(address(distributor));
         uint256 kBalance = k613.balanceOf(address(distributor));
@@ -241,6 +249,7 @@ contract InvariantStakingTest is StdInvariant, Test {
         assertGe(xBalance + kBalance + 1e9, total);
     }
 
+    /// @notice invariant_totalDepositsEqualsSumBalances: distributor.totalDeposits() equals the sum of balanceOf(actor) over all actors.
     function invariant_totalDepositsEqualsSumBalances() public view {
         uint256 sum = 0;
         for (uint256 i = 0; i < actors.length; i++) {

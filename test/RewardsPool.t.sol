@@ -48,26 +48,31 @@ contract RewardsDistributorTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice testConstructorRevertsOnZeroStakingToken: RewardsDistributor constructor with zero staking token reverts with ZeroAddress.
     function testConstructorRevertsOnZeroStakingToken() public {
         vm.expectRevert(RewardsDistributor.ZeroAddress.selector);
         new RewardsDistributor(address(0), address(token), address(k613), EPOCH);
     }
 
+    /// @notice testConstructorRevertsOnZeroRewardToken: Constructor with zero reward token reverts with ZeroAddress.
     function testConstructorRevertsOnZeroRewardToken() public {
         vm.expectRevert(RewardsDistributor.ZeroAddress.selector);
         new RewardsDistributor(address(token), address(0), address(k613), EPOCH);
     }
 
+    /// @notice testConstructorRevertsOnZeroK613: Constructor with zero K613 address reverts with ZeroAddress.
     function testConstructorRevertsOnZeroK613() public {
         vm.expectRevert(RewardsDistributor.ZeroAddress.selector);
         new RewardsDistributor(address(token), address(token), address(0), EPOCH);
     }
 
+    /// @notice testConstructorRevertsOnEpochZero: Constructor with zero epoch duration reverts with InvalidEpochDuration.
     function testConstructorRevertsOnEpochZero() public {
         vm.expectRevert(RewardsDistributor.InvalidEpochDuration.selector);
         new RewardsDistributor(address(token), address(token), address(k613), 0);
     }
 
+    /// @notice testDepositRevertsBelowMinInitial: First deposit below MIN_INITIAL_DEPOSIT reverts with MinimumInitialDeposit.
     function testDepositRevertsBelowMinInitial() public {
         xK613 freshToken = new xK613(address(this));
         K613 freshK613 = new K613(address(this));
@@ -84,12 +89,14 @@ contract RewardsDistributorTest is Test {
         freshRd.deposit(1e12 - 1);
     }
 
+    /// @notice testClaimRevertsWithoutRewards: claim() with no rewards reverts with NoRewards.
     function testClaimRevertsWithoutRewards() public {
         vm.expectRevert(RewardsDistributor.NoRewards.selector);
         vm.prank(alice);
         distributor.claim();
     }
 
+    /// @notice testNotifyRewardOnlyAuthorized: notifyReward from non-REWARDS_NOTIFIER reverts with AccessControlUnauthorizedAccount.
     function testNotifyRewardOnlyAuthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -100,17 +107,20 @@ contract RewardsDistributorTest is Test {
         distributor.notifyReward(1 * ONE);
     }
 
+    /// @notice testNotifyRewardZeroReverts: notifyReward(0) reverts with ZeroAmount.
     function testNotifyRewardZeroReverts() public {
         vm.expectRevert(RewardsDistributor.ZeroAmount.selector);
         distributor.notifyReward(0);
     }
 
+    /// @notice testNotifyRewardBelowMinReverts: notifyReward below MIN_NOTIFY reverts with MinimumNotify.
     function testNotifyRewardBelowMinReverts() public {
         token.transfer(address(distributor), 1);
         vm.expectRevert(RewardsDistributor.MinimumNotify.selector);
         distributor.notifyReward(1);
     }
 
+    /// @notice testNotifyRewardWhenTotalDepositsZeroGoesToPending: When totalDeposits is 0, notified rewards go to pendingRewards and distribute when users deposit.
     function testNotifyRewardWhenTotalDepositsZeroGoesToPending() public {
         vm.prank(alice);
         distributor.withdraw(1_000 * ONE);
@@ -133,6 +143,7 @@ contract RewardsDistributorTest is Test {
         );
     }
 
+    /// @notice testNotifyRewardDust_SmallAmountRoundsDown: Very small notifyReward with large totalDeposits rounds down per-share; no dust accrues to first user.
     function testNotifyRewardDust_SmallAmountRoundsDown() public {
         vm.prank(alice);
         distributor.withdraw(1_000 * ONE);
@@ -157,6 +168,7 @@ contract RewardsDistributorTest is Test {
         assertGe(accAfter, accBefore);
     }
 
+    /// @notice testNotifyRewardSmallAmount_ThenLargeDistributes: Small then large notifyReward; total distributed matches sum and shares are correct.
     function testNotifyRewardSmallAmount_ThenLargeDistributes() public {
         uint256 total = 2_000 * ONE;
         uint256 smallAmount = distributor.MIN_NOTIFY(); // minimum allowed notify
@@ -172,6 +184,7 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(distributor.pendingRewardsOf(bob), expectedPerUser, 10000);
     }
 
+    /// @notice testNotifyRewardManySmallAmounts_TotalMatches: Many small notifyReward amounts; sum of claims equals total notified.
     function testNotifyRewardManySmallAmounts_TotalMatches() public {
         uint256 totalNotify = 0;
         uint256 n = 20;
@@ -202,6 +215,7 @@ contract RewardsDistributorTest is Test {
         assertEq(aliceGot + bobGot, totalNotify, "sum of claims equals total notified");
     }
 
+    /// @notice testAddPendingPenaltyOnlyAuthorized: addPendingPenalty from non-REWARDS_NOTIFIER reverts with AccessControlUnauthorizedAccount.
     function testAddPendingPenaltyOnlyAuthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -212,6 +226,7 @@ contract RewardsDistributorTest is Test {
         distributor.addPendingPenalty(1 * ONE);
     }
 
+    /// @notice testAddPendingPenaltyAccumulatesUntilThreshold: addPendingPenalty accumulates in pendingPenalties until >= MIN_PENALTY_FLUSH; accRewardPerShare unchanged until flush.
     function testAddPendingPenaltyAccumulatesUntilThreshold() public {
         k613.transfer(address(distributor), 5 * ONE);
         uint256 half = ONE / 2;
@@ -222,6 +237,7 @@ contract RewardsDistributorTest is Test {
         assertEq(distributor.accRewardPerShare(), 0);
     }
 
+    /// @notice testAddPendingPenaltyFlushOnClaim: On claim(), held K613 (including pendingPenalties) is staked and penalties flush into accRewardPerShare; user receives share.
     function testAddPendingPenaltyFlushOnClaim() public {
         k613.transfer(address(distributor), 5 * ONE);
         uint256 penalty = ONE + (ONE / 2);
@@ -238,6 +254,7 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(aliceAfter - aliceBefore, aliceShare, 1000);
     }
 
+    /// @notice testAddPendingPenaltyNoFlushBelowThreshold: Penalties below MIN_PENALTY_FLUSH are not flushed on claim; claim with no other rewards reverts NoRewards.
     function testAddPendingPenaltyNoFlushBelowThreshold() public {
         uint256 half = ONE / 2;
         k613.transfer(address(distributor), half);
@@ -249,6 +266,7 @@ contract RewardsDistributorTest is Test {
         assertEq(distributor.pendingPenalties(), half);
     }
 
+    /// @notice testEpochFlush_PenaltiesBelowThreshold: advanceEpoch() after epoch end flushes pendingPenalties even below MIN_PENALTY_FLUSH; pendingRewardsOf updates.
     function testEpochFlush_PenaltiesBelowThreshold() public {
         k613.transfer(address(distributor), 5 * ONE);
         uint256 half = ONE / 2;
@@ -265,10 +283,12 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(distributor.pendingRewardsOf(alice), aliceShare, 1000);
     }
 
+    /// @notice testNextEpochAt: nextEpochAt() returns lastEpochFlushAt + epochDuration.
     function testNextEpochAt() public view {
         assertEq(distributor.nextEpochAt(), block.timestamp + EPOCH);
     }
 
+    /// @notice testDeposit_PauseReverts: When paused, deposit() reverts.
     function testDeposit_PauseReverts() public {
         distributor.pause();
         vm.prank(alice);
@@ -276,6 +296,7 @@ contract RewardsDistributorTest is Test {
         distributor.deposit(100 * ONE);
     }
 
+    /// @notice testWithdraw_PauseReverts: When paused, withdraw() reverts.
     function testWithdraw_PauseReverts() public {
         distributor.pause();
         vm.prank(alice);
@@ -283,6 +304,7 @@ contract RewardsDistributorTest is Test {
         distributor.withdraw(100 * ONE);
     }
 
+    /// @notice testClaim_PauseReverts: When paused, claim() reverts.
     function testClaim_PauseReverts() public {
         token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
@@ -292,6 +314,7 @@ contract RewardsDistributorTest is Test {
         distributor.claim();
     }
 
+    /// @notice testAdvanceEpoch_WhenTotalDepositsZero_Noop: advanceEpoch when totalDeposits is 0 does not flush pendingPenalties (noop for distribution).
     function testAdvanceEpoch_WhenTotalDepositsZero_Noop() public {
         vm.prank(alice);
         distributor.withdraw(1_000 * ONE);
@@ -304,11 +327,13 @@ contract RewardsDistributorTest is Test {
         assertEq(distributor.pendingPenalties(), ONE);
     }
 
+    /// @notice testAdvanceEpoch_BeforeEpochEnd_Reverts: advanceEpoch() before epoch end reverts with EpochNotReady.
     function testAdvanceEpoch_BeforeEpochEnd_Reverts() public {
         vm.expectRevert(RewardsDistributor.EpochNotReady.selector);
         distributor.advanceEpoch();
     }
 
+    /// @notice testAdvanceEpoch_AnyoneCanCall: Any account can call advanceEpoch(); penalties flush and lastEpochFlushAt updates.
     function testAdvanceEpoch_AnyoneCanCall() public {
         k613.transfer(address(distributor), ONE + (ONE / 2));
         distributor.addPendingPenalty(ONE + (ONE / 2));
@@ -318,6 +343,7 @@ contract RewardsDistributorTest is Test {
         assertEq(distributor.pendingPenalties(), 0);
     }
 
+    /// @notice testWithdraw_AfterDeposit_PreservesRewardShare: After withdraw, user's pendingRewardsOf still reflects accrued share from previous deposit.
     function testWithdraw_AfterDeposit_PreservesRewardShare() public {
         token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
@@ -327,10 +353,12 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(distributor.pendingRewardsOf(alice), aliceShare, 1000);
     }
 
+    /// @notice testPendingRewardsOf_EmptyAccount: pendingRewardsOf for address with no deposit returns 0.
     function testPendingRewardsOf_EmptyAccount() public view {
         assertEq(distributor.pendingRewardsOf(address(0x123)), 0);
     }
 
+    /// @notice testMultipleEpochs_PenaltiesFlushCorrectly: After multiple epoch warps, advanceEpoch flushes penalties and pendingRewardsOf reflects correct share.
     function testMultipleEpochs_PenaltiesFlushCorrectly() public {
         k613.transfer(address(distributor), 10 * ONE);
         distributor.addPendingPenalty(ONE / 2);
@@ -342,6 +370,7 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(distributor.pendingRewardsOf(alice), expected, 1000);
     }
 
+    /// @notice testSetStaking_RoleRevokedFromOld: setStaking(new) revokes REWARDS_NOTIFIER_ROLE from old staking and grants to new.
     function testSetStaking_RoleRevokedFromOld() public {
         RewardsDistributor rd = new RewardsDistributor(address(token), address(token), address(k613), EPOCH);
         rd.grantRole(rd.DEFAULT_ADMIN_ROLE(), address(this));
@@ -353,6 +382,7 @@ contract RewardsDistributorTest is Test {
         assertTrue(rd.hasRole(rd.REWARDS_NOTIFIER_ROLE(), address(0x222)));
     }
 
+    /// @notice test_FullFlow_Stake_Initiate_Exit_Claim: Full flow — stake, deposit to RD, notify reward, withdraw from RD, initiateExit, wait lock, exit, claim; user gets K613 back and claim share correct.
     function test_FullFlow_Stake_Initiate_Exit_Claim() public {
         K613 k613Local = new K613(address(this));
         Staking staking = new Staking(address(k613Local), address(token), 7 days, 0);
@@ -387,6 +417,7 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(token.balanceOf(alice), aliceXkBefore + aliceExpected, 1e15);
     }
 
+    /// @notice test_RD_setStaking_Zero_ThenReSet: setStaking(0) then setStaking(staking) updates staking address and role correctly.
     function test_RD_setStaking_Zero_ThenReSet() public {
         K613 k613Local = new K613(address(this));
         Staking staking = new Staking(address(k613Local), address(token), 7 days, 5_000);
@@ -401,6 +432,7 @@ contract RewardsDistributorTest is Test {
         assertEq(distributor.staking(), address(staking));
     }
 
+    /// @notice testNotifyRewardDistributesToHolders: notifyReward then claim; user receives pro-rata share and pendingRewards goes to 0.
     function testNotifyRewardDistributesToHolders() public {
         token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
@@ -415,6 +447,7 @@ contract RewardsDistributorTest is Test {
         assertEq(distributor.pendingRewards(), 0);
     }
 
+    /// @notice testClaimTransfersReward: claim() transfers reward token to user and pendingRewardsOf(user) becomes 0.
     function testClaimTransfersReward() public {
         token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
@@ -429,6 +462,7 @@ contract RewardsDistributorTest is Test {
         assertEq(distributor.pendingRewardsOf(alice), 0);
     }
 
+    /// @notice testPendingRewardsOf: pendingRewardsOf(alice) and pendingRewardsOf(bob) match expected pro-rata share after notifyReward.
     function testPendingRewardsOf() public {
         token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
@@ -438,6 +472,7 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(distributor.pendingRewardsOf(bob), aliceShare, 1000);
     }
 
+    /// @notice testWithdraw: withdraw(amount) decreases balanceOf and totalDeposits, returns staking token to user.
     function testWithdraw() public {
         uint256 aliceBalBefore = distributor.balanceOf(alice); // 1000
         uint256 withdrawAmt = 500 * ONE;
@@ -450,12 +485,14 @@ contract RewardsDistributorTest is Test {
         assertEq(distributor.totalDeposits(), 2_000 * ONE - withdrawAmt);
     }
 
+    /// @notice testWithdrawInsufficientReverts: withdraw(amount) exceeding balanceOf reverts with InsufficientBalance.
     function testWithdrawInsufficientReverts() public {
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.InsufficientBalance.selector);
         distributor.withdraw(2_000 * ONE);
     }
 
+    /// @notice testDeposit: deposit(amount) increases balanceOf and totalDeposits; user must approve and have token.
     function testDeposit() public {
         token.mint(alice, 500 * ONE);
         vm.prank(alice);
@@ -467,6 +504,7 @@ contract RewardsDistributorTest is Test {
         assertEq(distributor.totalDeposits(), 2_500 * ONE);
     }
 
+    /// @notice testInstantExitSmallPenalty_AccumulatesInRD: Small instant-exit penalty below MIN_PENALTY_FLUSH accumulates in pendingPenalties; accRewardPerShare unchanged until flush.
     function testInstantExitSmallPenalty_AccumulatesInRD() public {
         K613 k613Local = new K613(address(this));
         uint256 penaltyBps = 100;
@@ -497,6 +535,7 @@ contract RewardsDistributorTest is Test {
         assertEq(distributor.accRewardPerShare(), 0);
     }
 
+    /// @notice testDeposit_Withdraw_Claim_Ordering: notifyReward, withdraw, notifyReward, deposit; pendingRewardsOf reflects correct ordering and total conservation.
     function testDeposit_Withdraw_Claim_Ordering() public {
         token.transfer(address(distributor), 20 * ONE);
         distributor.notifyReward(10 * ONE);
@@ -509,6 +548,7 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(distributor.pendingRewardsOf(alice) + distributor.pendingRewardsOf(bob), 20 * ONE, 10000);
     }
 
+    /// @notice test_RD_Staking_PenaltyFlow_Integration: Staking with penalty; user instant-exits; penalty appears in RD and is distributed to remaining depositors (pendingRewardsOf).
     function test_RD_Staking_PenaltyFlow_Integration() public {
         Staking stakingWithPenalty = new Staking(address(k613), address(token), 7 days, 5_000);
         token.setMinter(address(stakingWithPenalty));
@@ -540,6 +580,7 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(distributor.pendingRewardsOf(bob), bobShare, 1000);
     }
 
+    /// @notice testClaimWorksDuringExitVesting: (Legacy/alternate behavior) Verifies claim or exit vesting interaction when RD and Staking are wired; may expect claim blocked or allowed depending on ExitVestingActive logic.
     function testClaimWorksDuringExitVesting() public {
         K613 k613Local = new K613(address(this));
         Staking stakingLocal = new Staking(address(k613Local), address(token), 7 days, 5_000);

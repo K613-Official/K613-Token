@@ -33,6 +33,7 @@ contract StakingFuzzTest is Test {
         xk613.setTransferWhitelist(address(staking), true);
     }
 
+    /// @notice testFuzzStake: Fuzz stake(amount) for any bounded amount and user; deposits and balances match.
     function testFuzzStake(uint256 rawAmount, address user) public {
         uint256 amount = bound(rawAmount, 1, MAX_AMOUNT);
         vm.assume(user != address(0));
@@ -51,6 +52,7 @@ contract StakingFuzzTest is Test {
         assertEq(xk613.balanceOf(user), amount);
     }
 
+    /// @notice testFuzzExit: Fuzz full exit path (stake, initiateExit, warp lock, exit); user gets K613 back, staking balance 0.
     function testFuzzExit(uint256 rawAmount, address user) public {
         uint256 amount = bound(rawAmount, 1, MAX_AMOUNT);
         vm.assume(user != address(0));
@@ -75,6 +77,7 @@ contract StakingFuzzTest is Test {
         assertEq(k613.balanceOf(address(staking)), 0);
     }
 
+    /// @notice testFuzzInstantExit: Fuzz instant exit; user receives amount - penalty, penalty sent to RewardsDistributor.
     function testFuzzInstantExit(uint256 rawAmount, address user) public {
         uint256 amount = bound(rawAmount, 1, MAX_AMOUNT);
         vm.assume(user != address(0));

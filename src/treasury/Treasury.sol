@@ -19,10 +19,6 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
     error ZeroAddress();
     /// @notice Thrown when amount is zero where a positive value is required.
     error ZeroAmount();
-    /// @notice Thrown when no controller is set (reserved for future use).
-    error NoController();
-    /// @notice Thrown when no assets are available (reserved for future use).
-    error NoAssets();
     /// @notice Thrown when the DEX swap call fails.
     error BuybackFailed();
     /// @notice Thrown when the swap output is less than minK613Out.
