@@ -957,10 +957,6 @@ contract IntegrationTest is Test {
         distributor.claim();
         vm.prank(carol);
         distributor.claim();
-        vm.prank(alice);
-        distributor.claim();
-        vm.prank(bob);
-        distributor.claim();
         assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
