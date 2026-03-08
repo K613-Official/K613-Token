@@ -621,4 +621,143 @@ contract RewardsDistributorTest is Test {
         distributor.claim();
         assertEq(distributor.pendingRewardsOf(alice), 0);
     }
+
+    /// @notice Notify when totalDeposits==0 (pendingRewards set); first deposit then claim — first depositor gets all pending.
+    function test_RewardAccounting_NotifyWhenPoolEmpty_FirstDepositorGetsAll() public {
+        xK613 freshToken = new xK613(address(this));
+        K613 freshK613 = new K613(address(this));
+        Staking freshStaking = new Staking(address(freshK613), address(freshToken), 7 days, 0);
+        freshToken.setMinter(address(freshStaking));
+        freshToken.grantRole(freshToken.MINTER_ROLE(), address(this));
+        freshToken.setTransferWhitelist(address(distributor), true);
+        freshToken.setTransferWhitelist(address(freshStaking), true);
+        RewardsDistributor freshRd =
+            new RewardsDistributor(address(freshToken), address(freshToken), address(freshK613), EPOCH);
+        freshRd.setStaking(address(freshStaking));
+        freshRd.grantRole(freshRd.REWARDS_NOTIFIER_ROLE(), address(this));
+
+        uint256 rewardAmount = 100 * ONE;
+        freshToken.mint(address(this), rewardAmount + 100_000 * ONE);
+        freshToken.setTransferWhitelist(address(this), true);
+        freshToken.transfer(address(freshRd), rewardAmount);
+        freshRd.notifyReward(rewardAmount);
+        assertEq(freshRd.totalDeposits(), 0);
+        assertGt(freshRd.pendingRewards(), 0);
+
+        freshToken.setTransferWhitelist(address(freshRd), true);
+        freshToken.setTransferWhitelist(alice, true);
+        freshToken.mint(alice, freshRd.MIN_INITIAL_DEPOSIT() + 1000 * ONE);
+        vm.startPrank(alice);
+        freshToken.approve(address(freshRd), type(uint256).max);
+        freshRd.deposit(freshRd.MIN_INITIAL_DEPOSIT());
+        vm.stopPrank();
+        uint256 aliceBefore = freshToken.balanceOf(alice);
+        vm.prank(alice);
+        freshRd.claim();
+        assertApproxEqAbs(freshToken.balanceOf(alice) - aliceBefore, rewardAmount, 1e15);
+        assertEq(freshRd.pendingRewards(), 0);
+    }
+
+    /// @notice Long idle (many epochs), then notify + advanceEpoch; accRewardPerShare and pendingRewardsOf correct.
+    function test_RewardAccounting_LongIdle_ThenNotifyAndAdvanceEpoch() public {
+        vm.warp(block.timestamp + EPOCH * 10);
+        token.transfer(address(distributor), 50 * ONE);
+        distributor.notifyReward(50 * ONE);
+        vm.prank(alice);
+        distributor.advanceEpoch();
+        uint256 expectedAlice = (1_000 * ONE * 50 * ONE) / (2_000 * ONE);
+        assertApproxEqAbs(distributor.pendingRewardsOf(alice), expectedAlice, 1000);
+        assertApproxEqAbs(distributor.pendingRewardsOf(bob), expectedAlice, 1000);
+        vm.prank(alice);
+        distributor.claim();
+        vm.prank(bob);
+        distributor.claim();
+        assertEq(distributor.pendingRewardsOf(alice), 0);
+        assertEq(distributor.pendingRewardsOf(bob), 0);
+    }
+
+    /// @notice Penalties when totalDeposits==0; then first deposit; advanceEpoch flushes at boundary; first depositor gets penalty share.
+    function test_RewardAccounting_PenaltiesWhenPoolEmpty_ThenFirstDeposit_AdvanceEpoch() public {
+        xK613 freshToken = new xK613(address(this));
+        K613 freshK613 = new K613(address(this));
+        freshK613.mint(address(this), 100_000 * ONE);
+        Staking freshStaking = new Staking(address(freshK613), address(freshToken), 7 days, 5_000);
+        freshToken.setMinter(address(freshStaking));
+        freshToken.grantRole(freshToken.MINTER_ROLE(), address(this));
+        freshToken.setTransferWhitelist(address(freshStaking), true);
+        RewardsDistributor freshRd =
+            new RewardsDistributor(address(freshToken), address(freshToken), address(freshK613), EPOCH);
+        freshRd.setStaking(address(freshStaking));
+        freshStaking.setRewardsDistributor(address(freshRd));
+        freshToken.setTransferWhitelist(address(freshRd), true);
+
+        freshK613.mint(alice, 1_000 * ONE);
+        freshToken.mint(alice, 10_000 * ONE);
+        vm.startPrank(alice);
+        freshK613.approve(address(freshStaking), 1_000 * ONE);
+        freshStaking.stake(1_000 * ONE);
+        freshToken.approve(address(freshStaking), 1_000 * ONE);
+        freshStaking.initiateExit(1_000 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        freshStaking.instantExit(0);
+        uint256 penalty = (1_000 * ONE * 5_000) / 10_000;
+        assertGt(freshRd.pendingPenalties(), 0);
+        assertEq(freshRd.totalDeposits(), 0);
+
+        vm.startPrank(alice);
+        freshToken.approve(address(freshRd), type(uint256).max);
+        freshRd.deposit(freshRd.MIN_INITIAL_DEPOSIT());
+        vm.stopPrank();
+        vm.warp(block.timestamp + EPOCH + 1);
+        vm.prank(alice);
+        freshRd.advanceEpoch();
+        assertEq(freshRd.pendingPenalties(), 0);
+        assertGt(freshRd.pendingRewardsOf(alice), 0);
+        uint256 before = freshToken.balanceOf(alice);
+        vm.prank(alice);
+        freshRd.claim();
+        assertApproxEqAbs(freshToken.balanceOf(alice) - before, penalty, 1e15);
+    }
+
+    /// @notice notifyReward below MIN_NOTIFY reverts.
+    function test_RewardAccounting_NotifyBelowMinReverts() public {
+        token.transfer(address(distributor), distributor.MIN_NOTIFY());
+        vm.expectRevert(RewardsDistributor.MinimumNotify.selector);
+        distributor.notifyReward(1);
+    }
+
+    /// @notice Fuzz: after notify/deposit/advanceEpoch/claim sequence, sum(claimed) + sum(pending) <= total notified + tolerance.
+    function testFuzz_RewardsConservation_ClaimPlusPendingBounded(uint256 notifyAmount1, uint256 notifyAmount2) public {
+        uint256 minNotify = distributor.MIN_NOTIFY();
+        notifyAmount1 = bound(notifyAmount1, minNotify, 5_000 * ONE);
+        notifyAmount2 = bound(notifyAmount2, minNotify, 5_000 * ONE);
+        uint256 totalNotified = notifyAmount1 + notifyAmount2;
+
+        uint256 aliceStart = token.balanceOf(alice);
+        uint256 bobStart = token.balanceOf(bob);
+
+        token.transfer(address(distributor), notifyAmount1);
+        distributor.notifyReward(notifyAmount1);
+        vm.warp(block.timestamp + EPOCH + 1);
+        distributor.advanceEpoch();
+        vm.prank(alice);
+        distributor.claim();
+        vm.prank(bob);
+        distributor.claim();
+
+        token.transfer(address(distributor), notifyAmount2);
+        distributor.notifyReward(notifyAmount2);
+        vm.warp(block.timestamp + EPOCH + 1);
+        distributor.advanceEpoch();
+        vm.prank(alice);
+        distributor.claim();
+        vm.prank(bob);
+        distributor.claim();
+
+        uint256 totalClaimed = (token.balanceOf(alice) - aliceStart) + (token.balanceOf(bob) - bobStart);
+        uint256 totalPending = distributor.pendingRewardsOf(alice) + distributor.pendingRewardsOf(bob);
+        assertLe(totalClaimed + totalPending, totalNotified + 1e18, "claim + pending <= notified + tol");
+    }
 }

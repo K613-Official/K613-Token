@@ -155,6 +155,15 @@ contract StakingHandler is Test {
         vm.prank(actor);
         distributor.withdraw(amount);
     }
+
+    /// @notice advanceEpoch: Warp to next epoch boundary if needed and call advanceEpoch() so pending rewards/penalties are distributed.
+    function advanceEpoch(uint256) external {
+        uint256 next = distributor.nextEpochAt();
+        if (block.timestamp < next) {
+            vm.warp(next);
+        }
+        distributor.advanceEpoch();
+    }
 }
 
 contract InvariantStakingTest is StdInvariant, Test {
