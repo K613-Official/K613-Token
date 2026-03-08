@@ -941,6 +941,8 @@ contract IntegrationTest is Test {
         distributor.deposit(400 * ONE);
         _depositRewards(60 * ONE);
         vm.prank(alice);
+        distributor.withdraw(100 * ONE);
+        vm.prank(alice);
         xk613.approve(address(staking), 100 * ONE);
         vm.prank(alice);
         staking.initiateExit(100 * ONE);
