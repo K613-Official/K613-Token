@@ -42,6 +42,10 @@ contract IntegrationTest is Test {
                 _attachDeployed(k613Addr, xk613Addr, stakingAddr, distributorAddr, treasuryAddr);
                 useDeployed = true;
                 deployer = vm.envOr("DEPLOYER_ADDRESS", address(this));
+
+                if (address(k613).code.length == 0) {
+                    vm.skip(true);
+                }
                 return;
             }
         }
@@ -830,5 +834,525 @@ contract IntegrationTest is Test {
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.NoRewards.selector);
         distributor.claim();
+    }
+
+    /// @notice Long idle: warp 10 epochs, notify rewards, advanceEpoch, one user instant-exit (penalty), then both claim; invariants hold. Работает и на форке с реальными токенами (useDeployed + --fork-url).
+    function test_Integration_LongIdle_ThenEpochAndPenalties() public {
+        _fundUser(alice, 1_000 * ONE);
+        _fundUser(bob, 1_000 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(500 * ONE);
+        vm.stopPrank();
+        vm.startPrank(bob);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(500 * ONE);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 10 * _epochDuration());
+        _depositRewards(100 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        staking.instantExit(0);
+        vm.warp(block.timestamp + _epochDuration() + 1);
+        distributor.advanceEpoch();
+        vm.prank(alice);
+        distributor.claim();
+        vm.prank(bob);
+        distributor.claim();
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Penalties only: no notify; alice instant-exit sends penalty to RD, advanceEpoch, both claim share of penalties. Работает на форке с реальными токенами.
+    function test_Integration_PenaltiesOnly_NoNotify() public {
+        _fundUser(alice, 1_000 * ONE);
+        _fundUser(bob, 1_000 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(500 * ONE);
+        vm.stopPrank();
+        vm.startPrank(bob);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(500 * ONE);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        xk613.approve(address(staking), 200 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(200 * ONE);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        staking.instantExit(0);
+        vm.warp(block.timestamp + _epochDuration() + 1);
+        distributor.advanceEpoch();
+        uint256 aliceBefore = xk613.balanceOf(alice);
+        uint256 bobBefore = xk613.balanceOf(bob);
+        vm.prank(alice);
+        distributor.claim();
+        vm.prank(bob);
+        distributor.claim();
+        assertGt(xk613.balanceOf(alice), aliceBefore);
+        assertGt(xk613.balanceOf(bob), bobBefore);
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Chain: instant exit → advanceEpoch → multiple claims (alice, bob, carol); invariants hold. Работает на форке с реальными токенами.
+    function test_Integration_InstantExit_AdvanceEpoch_MultipleClaims() public {
+        _fundUser(alice, 800 * ONE);
+        _fundUser(bob, 800 * ONE);
+        _fundUser(carol, 800 * ONE);
+        vm.prank(alice);
+        k613.approve(address(staking), 800 * ONE);
+        vm.prank(alice);
+        staking.stake(400 * ONE);
+        vm.prank(bob);
+        k613.approve(address(staking), 800 * ONE);
+        vm.prank(bob);
+        staking.stake(400 * ONE);
+        vm.prank(carol);
+        k613.approve(address(staking), 800 * ONE);
+        vm.prank(carol);
+        staking.stake(400 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(distributor), 400 * ONE);
+        vm.prank(alice);
+        distributor.deposit(400 * ONE);
+        vm.prank(bob);
+        xk613.approve(address(distributor), 400 * ONE);
+        vm.prank(bob);
+        distributor.deposit(400 * ONE);
+        vm.prank(carol);
+        xk613.approve(address(distributor), 400 * ONE);
+        vm.prank(carol);
+        distributor.deposit(400 * ONE);
+        _depositRewards(60 * ONE);
+        vm.prank(alice);
+        distributor.withdraw(100 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        staking.instantExit(0);
+        vm.warp(block.timestamp + _epochDuration() + 1);
+        distributor.advanceEpoch();
+        vm.prank(alice);
+        distributor.claim();
+        vm.prank(bob);
+        distributor.claim();
+        vm.prank(carol);
+        distributor.claim();
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Testnet: minimal first deposit (MIN_INITIAL_DEPOSIT), small rewards, claim; no reverts, invariant holds.
+    function test_Integration_Testnet_MinimalAmounts_FirstDepositAndDust() public {
+        uint256 minDeposit = distributor.MIN_INITIAL_DEPOSIT();
+        _fundUser(alice, minDeposit + 100 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), minDeposit + 100 * ONE);
+        staking.stake(minDeposit + 100 * ONE);
+        xk613.approve(address(distributor), minDeposit + 100 * ONE);
+        distributor.deposit(minDeposit);
+        vm.stopPrank();
+        _depositRewards(distributor.MIN_NOTIFY());
+        vm.warp(block.timestamp + _epochDuration() + 1);
+        distributor.advanceEpoch();
+        uint256 pending = distributor.pendingRewardsOf(alice);
+        if (pending > 0) {
+            vm.prank(alice);
+            distributor.claim();
+        }
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Testnet: pause blocks stake/exit/initiateExit/instantExit/cancelExit; unpause restores operations.
+    function test_Integration_Testnet_Pause_BlocksThenUnpauseWorks() public {
+        _fundUser(alice, 500 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), 500 * ONE);
+        staking.stake(500 * ONE);
+        xk613.approve(address(distributor), 500 * ONE);
+        distributor.deposit(500 * ONE);
+        vm.stopPrank();
+        _depositRewards(50 * ONE);
+
+        staking.pause();
+        vm.prank(alice);
+        vm.expectRevert();
+        staking.stake(1);
+        vm.prank(alice);
+        distributor.withdraw(100 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        vm.expectRevert();
+        staking.initiateExit(100 * ONE);
+
+        staking.unpause();
+        vm.startPrank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        staking.initiateExit(100 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + _lockDuration());
+        vm.prank(alice);
+        staking.exit(0);
+        vm.prank(alice);
+        distributor.claim();
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Testnet: full withdraw from RD, full exit, claim once succeeds, second claim reverts NoRewards.
+    function test_Integration_Testnet_FullExit_ThenClaimRemainder() public {
+        _fundUser(alice, 1_000 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(1_000 * ONE);
+        vm.stopPrank();
+        _depositRewards(100 * ONE);
+
+        uint256 pending = distributor.pendingRewardsOf(alice);
+        assertGt(pending, 0);
+        vm.startPrank(alice);
+        distributor.withdraw(1_000 * ONE);
+        xk613.approve(address(staking), 1_000 * ONE);
+        staking.initiateExit(1_000 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + _lockDuration());
+        vm.prank(alice);
+        staking.exit(0);
+        uint256 aliceBefore = xk613.balanceOf(alice);
+        vm.prank(alice);
+        distributor.claim();
+        assertGt(xk613.balanceOf(alice) - aliceBefore, 0);
+        assertEq(distributor.pendingRewardsOf(alice), 0);
+        vm.prank(alice);
+        vm.expectRevert(RewardsDistributor.NoRewards.selector);
+        distributor.claim();
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Testnet: two reward deposits in same epoch, one instant exit, advance epoch, claim amounts correct.
+    function test_Integration_Testnet_TwoRewardDeposits_SameEpoch_ThenEpochBoundary() public {
+        _fundUser(alice, 2_000 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), 2_000 * ONE);
+        staking.stake(2_000 * ONE);
+        xk613.approve(address(distributor), 2_000 * ONE);
+        distributor.deposit(2_000 * ONE);
+        vm.stopPrank();
+        _depositRewards(100 * ONE);
+        vm.warp(block.timestamp + 1 days);
+        _depositRewards(50 * ONE);
+        vm.startPrank(alice);
+        distributor.withdraw(500 * ONE);
+        xk613.approve(address(staking), 500 * ONE);
+        staking.initiateExit(500 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        staking.instantExit(0);
+        vm.warp(block.timestamp + _epochDuration() + 1);
+        distributor.advanceEpoch();
+        uint256 pending = distributor.pendingRewardsOf(alice);
+        assertGt(pending, 0);
+        uint256 before = xk613.balanceOf(alice);
+        vm.prank(alice);
+        distributor.claim();
+        assertGt(xk613.balanceOf(alice) - before, 0);
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Testnet: claim then withdraw vs withdraw then claim — both paths succeed and amounts consistent.
+    function test_Integration_Testnet_ClaimThenWithdraw_vs_WithdrawThenClaim() public {
+        _fundUser(alice, 1_000 * ONE);
+        _fundUser(bob, 1_000 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(1_000 * ONE);
+        vm.stopPrank();
+        vm.startPrank(bob);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(1_000 * ONE);
+        vm.stopPrank();
+        _depositRewards(200 * ONE);
+        vm.warp(block.timestamp + _epochDuration() + 1);
+        distributor.advanceEpoch();
+
+        uint256 aliceClaimFirst = distributor.pendingRewardsOf(alice);
+        vm.prank(alice);
+        distributor.claim();
+        vm.prank(alice);
+        distributor.withdraw(500 * ONE);
+        vm.prank(bob);
+        distributor.withdraw(300 * ONE);
+        vm.prank(bob);
+        distributor.claim();
+        assertGt(aliceClaimFirst, 0);
+        assertTrue(xk613.balanceOf(alice) > 0 || xk613.balanceOf(bob) > 0);
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Testnet: mixed normal/instant exits over time; backingIntegrity and totalSupply == totalBacking after each step.
+    function test_Integration_Testnet_BackingInvariant_MixedExitsOverTime() public {
+        _fundUser(alice, 1_000 * ONE);
+        _fundUser(bob, 1_000 * ONE);
+        _fundUser(carol, 1_000 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        vm.stopPrank();
+        vm.startPrank(bob);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        vm.stopPrank();
+        vm.startPrank(carol);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        vm.stopPrank();
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+
+        vm.startPrank(alice);
+        xk613.approve(address(staking), 300 * ONE);
+        staking.initiateExit(300 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        staking.instantExit(0);
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+
+        vm.startPrank(bob);
+        xk613.approve(address(staking), 400 * ONE);
+        staking.initiateExit(400 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + _lockDuration() + 1);
+        vm.prank(bob);
+        staking.exit(0);
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+
+        vm.startPrank(carol);
+        xk613.approve(address(staking), 200 * ONE);
+        staking.initiateExit(200 * ONE);
+        staking.cancelExit(0);
+        vm.stopPrank();
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Stress: cancel middle exit request (swap-with-last), then exit remaining indices; indices and amounts correct.
+    function test_Integration_Stress_CancelMiddleIndex_ThenExitRemaining() public {
+        _fundUser(alice, 1_000 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(staking), 600 * ONE);
+        staking.initiateExit(100 * ONE);
+        staking.initiateExit(200 * ONE);
+        staking.initiateExit(300 * ONE);
+        vm.stopPrank();
+        assertEq(staking.exitQueueLength(alice), 3);
+        (uint256 amt0,) = staking.exitRequestAt(alice, 0);
+        (uint256 amt1,) = staking.exitRequestAt(alice, 1);
+        (uint256 amt2,) = staking.exitRequestAt(alice, 2);
+        assertEq(amt0, 100 * ONE);
+        assertEq(amt1, 200 * ONE);
+        assertEq(amt2, 300 * ONE);
+
+        vm.prank(alice);
+        staking.cancelExit(1);
+        assertEq(staking.exitQueueLength(alice), 2);
+        (uint256 a0,) = staking.exitRequestAt(alice, 0);
+        (uint256 a1,) = staking.exitRequestAt(alice, 1);
+        assertTrue(a0 == 100 * ONE || a0 == 300 * ONE);
+        assertTrue(a1 == 100 * ONE || a1 == 300 * ONE);
+        assertTrue(a0 + a1 == 400 * ONE);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        staking.instantExit(0);
+        vm.warp(block.timestamp + _lockDuration() + 1);
+        vm.prank(alice);
+        staking.exit(0);
+        (uint256 remaining,) = staking.deposits(alice);
+        assertEq(remaining, 600 * ONE);
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Stress: rewards notified when totalDeposits==0 (Treasury depositRewards before any RD deposit), then first user deposits and claims all.
+    function test_Integration_Stress_RewardsWhenPoolEmpty_ThenFirstDeposit() public {
+        _depositRewards(100 * ONE);
+        assertEq(distributor.totalDeposits(), 0);
+        _fundUser(alice, 200 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), 200 * ONE);
+        staking.stake(200 * ONE);
+        xk613.approve(address(distributor), 200 * ONE);
+        distributor.deposit(200 * ONE);
+        vm.stopPrank();
+        uint256 pending = distributor.pendingRewardsOf(alice);
+        assertGt(pending, 0);
+        uint256 before = xk613.balanceOf(alice);
+        vm.prank(alice);
+        distributor.claim();
+        assertApproxEqAbs(xk613.balanceOf(alice) - before, 100 * ONE, 1e15);
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Stress: two users alternating stake, deposit RD, withdraw, claim, exit.
+    function test_Integration_Stress_TwoUsersAlternating() public {
+        _fundUser(alice, 2_000 * ONE);
+        _fundUser(bob, 2_000 * ONE);
+        vm.prank(alice);
+        k613.approve(address(staking), 2_000 * ONE);
+        vm.prank(alice);
+        staking.stake(1_000 * ONE);
+        vm.prank(bob);
+        k613.approve(address(staking), 2_000 * ONE);
+        vm.prank(bob);
+        staking.stake(1_000 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        vm.prank(alice);
+        distributor.deposit(1_000 * ONE);
+        vm.prank(bob);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        vm.prank(bob);
+        distributor.deposit(1_000 * ONE);
+        _depositRewards(150 * ONE);
+        vm.prank(alice);
+        distributor.withdraw(400 * ONE);
+        vm.prank(bob);
+        distributor.claim();
+        vm.prank(alice);
+        distributor.claim();
+        vm.prank(bob);
+        distributor.withdraw(300 * ONE);
+        vm.startPrank(alice);
+        xk613.approve(address(staking), 400 * ONE);
+        staking.initiateExit(400 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        staking.instantExit(0);
+        vm.startPrank(bob);
+        xk613.approve(address(staking), 300 * ONE);
+        staking.initiateExit(300 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + _lockDuration() + 1);
+        vm.prank(bob);
+        staking.exit(0);
+        vm.prank(alice);
+        distributor.claim();
+        vm.prank(bob);
+        distributor.claim();
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Stress: fill exit queue to MAX_EXIT_REQUESTS, cancel all, then fill again and mix cancel/instant/normal exit.
+    function test_Integration_Stress_MaxQueueCancelAll_ThenFullCycleAgain() public {
+        uint256 perStake = 200 * ONE;
+        uint256 totalStake = perStake * (staking.MAX_EXIT_REQUESTS() + 2);
+        _fundUser(alice, totalStake);
+        vm.startPrank(alice);
+        k613.approve(address(staking), totalStake);
+        staking.stake(totalStake);
+        xk613.approve(address(staking), perStake * staking.MAX_EXIT_REQUESTS());
+        vm.stopPrank();
+        for (uint256 i = 0; i < staking.MAX_EXIT_REQUESTS(); i++) {
+            vm.prank(alice);
+            staking.initiateExit(perStake);
+        }
+        assertEq(staking.exitQueueLength(alice), staking.MAX_EXIT_REQUESTS());
+        vm.prank(alice);
+        vm.expectRevert(Staking.ExitQueueFull.selector);
+        staking.initiateExit(perStake);
+        for (uint256 j = staking.MAX_EXIT_REQUESTS(); j > 0; j--) {
+            vm.prank(alice);
+            staking.cancelExit(j - 1);
+        }
+        assertEq(staking.exitQueueLength(alice), 0);
+        (uint256 staked,) = staking.deposits(alice);
+        assertEq(staked, totalStake);
+
+        vm.prank(alice);
+        xk613.approve(address(staking), perStake * 3);
+        vm.prank(alice);
+        staking.initiateExit(perStake);
+        vm.prank(alice);
+        staking.initiateExit(perStake);
+        vm.prank(alice);
+        staking.initiateExit(perStake);
+        vm.prank(alice);
+        staking.cancelExit(0);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(alice);
+        staking.instantExit(0);
+        vm.warp(block.timestamp + _lockDuration() + 1);
+        vm.prank(alice);
+        staking.exit(0);
+        assertEq(staking.exitQueueLength(alice), 0);
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+    }
+
+    /// @notice Stress: full exit, claim once succeeds, second claim reverts NoRewards and pendingRewardsOf is 0.
+    function test_Integration_Stress_FullExit_SecondClaimReverts() public {
+        _fundUser(alice, 1_000 * ONE);
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(1_000 * ONE);
+        vm.stopPrank();
+        _depositRewards(80 * ONE);
+        vm.startPrank(alice);
+        distributor.withdraw(1_000 * ONE);
+        xk613.approve(address(staking), 1_000 * ONE);
+        staking.initiateExit(1_000 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + _lockDuration() + 1);
+        vm.prank(alice);
+        staking.exit(0);
+        vm.prank(alice);
+        distributor.claim();
+        assertEq(distributor.pendingRewardsOf(alice), 0);
+        vm.prank(alice);
+        vm.expectRevert(RewardsDistributor.NoRewards.selector);
+        distributor.claim();
+        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 }

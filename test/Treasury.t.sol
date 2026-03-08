@@ -3,6 +3,8 @@ pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
 import {IAccessControl} from "openzeppelin-contracts/contracts/access/IAccessControl.sol";
+import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {K613} from "../src/token/K613.sol";
 import {xK613} from "../src/token/xK613.sol";
 import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
@@ -33,6 +35,31 @@ contract MockRouter {
         } else {
             k613.transfer(msg.sender, 1e18);
         }
+    }
+}
+
+/// @dev Minimal ERC20 for buyback tests with a token other than K613.
+contract MockToken is ERC20 {
+    constructor() ERC20("Mock", "M") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
+/// @dev Router that pulls tokenIn from caller and sends K613 (for buyback with "other" token).
+contract MockRouterOtherToken {
+    K613 public k613;
+    address public tokenIn;
+
+    constructor(address _k613, address _tokenIn) {
+        k613 = K613(_k613);
+        tokenIn = _tokenIn;
+    }
+
+    function swapExactTokensForTokens(uint256 amountIn) external {
+        IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
+        k613.transfer(msg.sender, 1e18);
     }
 }
 
@@ -261,6 +288,54 @@ contract TreasuryTest is Test {
         treasury.buyback(address(k613), address(router), 1, data, 1e18, true);
         assertEq(xk613.balanceOf(address(distributor)), rdBalBefore + 1e18);
         assertGt(distributor.pendingRewardsOf(alice), 0);
+    }
+
+    /// @notice testBuyback_DistributeRewardsTrue_TreasuryK613Zero: when Treasury has no K613 before buyback and distributeRewards true, K613 balance is 0 after.
+    function testBuyback_DistributeRewardsTrue_TreasuryK613Zero() public {
+        Treasury freshTreasury = new Treasury(address(k613), address(xk613), address(staking), address(distributor));
+        freshTreasury.grantRole(freshTreasury.DEFAULT_ADMIN_ROLE(), address(this));
+        freshTreasury.grantRole(freshTreasury.PAUSER_ROLE(), address(this));
+        distributor.grantRole(distributor.REWARDS_NOTIFIER_ROLE(), address(freshTreasury));
+        xk613.setTransferWhitelist(address(freshTreasury), true);
+        xk613.mint(alice, 1_000 * ONE);
+        xk613.setTransferWhitelist(alice, true);
+        vm.prank(alice);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        vm.prank(alice);
+        distributor.deposit(1_000 * ONE);
+
+        MockRouter router = new MockRouter(address(k613));
+        freshTreasury.setRouterWhitelist(address(router), true);
+        k613.mint(address(router), 100 * ONE);
+        bytes memory data = abi.encodeWithSelector(MockRouter.swapExactTokensForTokens.selector);
+        assertEq(k613.balanceOf(address(freshTreasury)), 0);
+        freshTreasury.buyback(address(k613), address(router), 1, data, 1e18, true);
+        assertEq(k613.balanceOf(address(freshTreasury)), 0);
+    }
+
+    /// @notice testBuyback_ApproveResetAfterCall: after buyback, tokenIn allowance from Treasury to router is 0.
+    function testBuyback_ApproveResetAfterCall() public {
+        MockRouter router = new MockRouter(address(k613));
+        treasury.setRouterWhitelist(address(router), true);
+        k613.mint(address(router), 100 * ONE);
+        bytes memory data = abi.encodeWithSelector(MockRouter.swapExactTokensForTokens.selector);
+        treasury.buyback(address(k613), address(router), 1, data, 1e18, false);
+        assertEq(k613.allowance(address(treasury), address(router)), 0);
+    }
+
+    /// @notice testBuyback_WithOtherToken_MockRouter: buyback with a token other than K613; mock router pulls tokenIn and sends K613.
+    function testBuyback_WithOtherToken_MockRouter() public {
+        MockToken otherToken = new MockToken();
+        otherToken.mint(address(treasury), 1000 * ONE);
+        MockRouterOtherToken router = new MockRouterOtherToken(address(k613), address(otherToken));
+        k613.mint(address(router), 100 * ONE);
+        treasury.setRouterWhitelist(address(router), true);
+        uint256 amountIn = 50 * ONE;
+        bytes memory data = abi.encodeWithSelector(MockRouterOtherToken.swapExactTokensForTokens.selector, amountIn);
+        uint256 k613Before = k613.balanceOf(address(treasury));
+        treasury.buyback(address(otherToken), address(router), amountIn, data, 1e18, false);
+        assertEq(k613.balanceOf(address(treasury)), k613Before + 1e18);
+        assertEq(otherToken.allowance(address(treasury), address(router)), 0);
     }
 
     /// @notice testBuyback_BuybackFailed: buyback when router call fails reverts with BuybackFailed.
