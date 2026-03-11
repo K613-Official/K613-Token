@@ -280,6 +280,25 @@ contract StakingTest is Test {
         assertEq(address(staking.rewardsDistributor()), address(0));
     }
 
+    /// @notice stake(amount) with K613 balance < amount reverts.
+    function test_Stake_InsufficientK613Balance_Reverts() public {
+        address carol = address(0xC0C);
+
+        // Carol has less K613 than she tries to stake
+        k613.mint(carol, 50 * ONE);
+
+        vm.startPrank(carol);
+        k613.approve(address(staking), 100 * ONE);
+        vm.expectRevert();
+        staking.stake(100 * ONE);
+        vm.stopPrank();
+
+        // Balances remain unchanged
+        assertEq(k613.balanceOf(address(staking)), 0);
+        (uint256 amount,) = staking.deposits(carol);
+        assertEq(amount, 0);
+    }
+
     /// @notice test_InstantExit_RevertsWhenDistributorZeroAndPenalty: instantExit with penalty and no rewards distributor set reverts with RewardsDistributorNotSet.
     function test_InstantExit_RevertsWhenDistributorZeroAndPenalty() public {
         staking.setRewardsDistributor(address(0));
@@ -296,6 +315,20 @@ contract StakingTest is Test {
         vm.prank(alice);
         vm.expectRevert(Staking.RewardsDistributorNotSet.selector);
         staking.instantExit(0);
+    }
+
+    /// @notice Only DEFAULT_ADMIN_ROLE can call setRewardsDistributor.
+    function test_SetRewardsDistributor_OnlyAdmin() public {
+        address nonAdmin = address(0xBAD);
+        address newRd = address(0x1234);
+
+        // address(this) is admin and can change distributor
+        staking.setRewardsDistributor(address(distributor));
+        assertEq(address(staking.rewardsDistributor()), address(distributor));
+
+        vm.prank(nonAdmin);
+        vm.expectRevert();
+        staking.setRewardsDistributor(newRd);
     }
 
     /// @notice test_InstantExit_PenaltyToDistributor: instantExit sends penalty K613 to RewardsDistributor and addPendingPenalty is called.
@@ -632,5 +665,61 @@ contract StakingTest is Test {
 
         uint256 expected = (200 * ONE * PENALTY_BPS) / 10_000;
         assertEq(k613.balanceOf(address(distributor)), expected);
+    }
+
+    /// @notice Invariant: xK613.totalSupply should equal staking.totalBacking across typical flows (no direct minting to others).
+    function test_Invariant_xK613Supply_EqualsTotalBacking() public {
+        // Alice stakes
+        vm.prank(alice);
+        k613.approve(address(staking), 300 * ONE);
+        vm.prank(alice);
+        staking.stake(300 * ONE);
+
+        // Bob stakes
+        vm.prank(bob);
+        k613.approve(address(staking), 200 * ONE);
+        vm.prank(bob);
+        staking.stake(200 * ONE);
+
+        // Check after stakes
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+        assertTrue(staking.backingIntegrity());
+
+        // Alice initiates and completes standard exit
+        vm.startPrank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        staking.initiateExit(100 * ONE);
+        vm.warp(block.timestamp + LOCK_DURATION);
+        staking.exit(0);
+        vm.stopPrank();
+
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+        assertTrue(staking.backingIntegrity());
+
+        // Bob uses instantExit
+        vm.startPrank(bob);
+        xk613.approve(address(staking), 200 * ONE);
+        staking.initiateExit(200 * ONE);
+        vm.warp(block.timestamp + 1 days);
+        staking.instantExit(0);
+        vm.stopPrank();
+
+        assertEq(xk613.totalSupply(), staking.totalBacking());
+        assertTrue(staking.backingIntegrity());
+    }
+
+    /// @notice Direct K613 transfers to staking contract break backingIntegrity (detects stray transfers / fee-on-transfer tokens).
+    function test_BackingIntegrity_BreaksOnDirectK613Transfer() public {
+        vm.prank(alice);
+        k613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.stake(100 * ONE);
+        assertTrue(staking.backingIntegrity());
+
+        // Send extra K613 directly to Staking without updating _totalBacking
+        vm.prank(alice);
+        k613.transfer(address(staking), 10 * ONE);
+
+        assertFalse(staking.backingIntegrity());
     }
 }

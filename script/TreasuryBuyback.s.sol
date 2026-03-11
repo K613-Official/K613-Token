@@ -14,20 +14,28 @@ contract TreasuryBuyback is Script {
         address router = vm.envAddress("ROUTER_ADDRESS");
         uint256 amount = vm.envOr("AMOUNT", uint256(0));
         uint256 minK613Out = vm.envUint("MIN_K613_OUT");
-        bytes memory swapCalldata = vm.parseBytes(vm.envString("SWAP_CALLDATA_HEX"));
+        // SWAP_PATH is a comma-separated list of addresses, e.g. "0xToken,0xK613"
+        string memory pathStr = vm.envString("SWAP_PATH");
 
         if (amount == 0) {
             amount = IERC20(token).balanceOf(treasuryAddr);
             console.log("Using full Treasury balance:", amount);
         }
         require(amount != 0, "TreasuryBuyback: zero amount");
-        require(swapCalldata.length != 0, "TreasuryBuyback: SWAP_CALLDATA_HEX required");
+        require(bytes(pathStr).length != 0, "TreasuryBuyback: SWAP_PATH required");
 
         uint256 pk = vm.envUint("PRIVATE_KEY");
 
+        // Parse SWAP_PATH into address[]
+        string[] memory parts = vm.split(pathStr, ",");
+        address[] memory path = new address[](parts.length);
+        for (uint256 i = 0; i < parts.length; i++) {
+            path[i] = vm.parseAddress(parts[i]);
+        }
+
         vm.startBroadcast(pk);
         Treasury treasury = Treasury(treasuryAddr);
-        uint256 k613Out = treasury.buyback(token, router, amount, swapCalldata, minK613Out, true);
+        uint256 k613Out = treasury.buyback(token, router, amount, minK613Out, path, true);
         vm.stopBroadcast();
 
         console.log("Buyback done: received", k613Out, "K613");

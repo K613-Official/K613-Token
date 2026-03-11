@@ -63,6 +63,7 @@ import {RewardsDistributor} from "./RewardsDistributor.sol";
  * This design preserves proven economic incentives from Shadow while favoring
  * auditability, explicit user intent, and minimal cross-contract coupling.
  */
+///@author a.r.c.i.t.e.c.t
 contract Staking is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 

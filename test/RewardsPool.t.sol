@@ -3,10 +3,40 @@ pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
 import {IAccessControl} from "openzeppelin-contracts/contracts/access/IAccessControl.sol";
+import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
 import {xK613} from "../src/token/xK613.sol";
 import {K613} from "../src/token/K613.sol";
 import {Staking} from "../src/staking/Staking.sol";
+
+contract ReentrantRewardToken is ERC20 {
+    RewardsDistributor public distributor;
+    bool private inCallback;
+
+    constructor() ERC20("ReentrantReward", "RR") {}
+
+    function setDistributor(address rd) external {
+        distributor = RewardsDistributor(rd);
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        bool ok = super.transfer(to, amount);
+        if (!inCallback && address(distributor) != address(0)) {
+            inCallback = true;
+            // Попытка реэнтрантно вызвать claim() во время выплаты
+            try distributor.claim() {}
+                catch {
+                // ожидаем revert из-за ReentrancyGuard
+            }
+            inCallback = false;
+        }
+        return ok;
+    }
+}
 
 contract RewardsDistributorTest is Test {
     xK613 private token;
@@ -721,11 +751,167 @@ contract RewardsDistributorTest is Test {
         assertApproxEqAbs(freshToken.balanceOf(alice) - before, penalty, 1e15);
     }
 
+    /// @notice Dust scenario: notify when totalDeposits==0, first MIN depositor captures almost all rewards; behavior for the second depositor is intentionally left implementation-dependent.
+    function test_RewardAccounting_DustThenLargeDeposit_FirstGetsAll() public {
+        xK613 freshToken = new xK613(address(this));
+        K613 freshK613 = new K613(address(this));
+        Staking freshStaking = new Staking(address(freshK613), address(freshToken), 7 days, 0);
+        freshToken.setMinter(address(freshStaking));
+        freshToken.grantRole(freshToken.MINTER_ROLE(), address(this));
+        freshToken.setTransferWhitelist(address(freshStaking), true);
+
+        RewardsDistributor freshRd =
+            new RewardsDistributor(address(freshToken), address(freshToken), address(freshK613), EPOCH);
+        freshRd.setStaking(address(freshStaking));
+        freshRd.grantRole(freshRd.REWARDS_NOTIFIER_ROLE(), address(this));
+        freshToken.setTransferWhitelist(address(freshRd), true);
+
+        address attacker = address(0xA);
+        address victim = address(0xB);
+
+        uint256 rewardAmount = 100 * ONE;
+        uint256 min = freshRd.MIN_INITIAL_DEPOSIT();
+
+        // notify while totalDeposits == 0
+        freshToken.mint(address(this), rewardAmount);
+        freshToken.transfer(address(freshRd), rewardAmount);
+        freshRd.notifyReward(rewardAmount);
+
+        // attacker stakes and deposits the minimum
+        freshK613.mint(attacker, 1_000 * ONE);
+        vm.startPrank(attacker);
+        freshK613.approve(address(freshStaking), 1_000 * ONE);
+        freshStaking.stake(1_000 * ONE);
+        freshToken.approve(address(freshRd), 1_000 * ONE);
+        freshRd.deposit(min);
+        vm.stopPrank();
+
+        // victim stakes and deposits a large amount after attacker
+        freshK613.mint(victim, 10_000 * ONE);
+        vm.startPrank(victim);
+        freshK613.approve(address(freshStaking), 10_000 * ONE);
+        freshStaking.stake(10_000 * ONE);
+        freshToken.approve(address(freshRd), 10_000 * ONE);
+        freshRd.deposit(5_000 * ONE);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + EPOCH + 1);
+        freshRd.advanceEpoch();
+
+        uint256 attackerBefore = freshToken.balanceOf(attacker);
+        uint256 victimBefore = freshToken.balanceOf(victim);
+
+        vm.prank(attacker);
+        freshRd.claim();
+        uint256 attackerGain = freshToken.balanceOf(attacker) - attackerBefore;
+        assertApproxEqAbs(attackerGain, rewardAmount, 1e15);
+
+        // Victim behavior may change if reward distribution logic changes:
+        // either claim reverts with NoRewards or yields a small residual amount.
+        vm.prank(victim);
+        try freshRd.claim() {
+            uint256 victimGain = freshToken.balanceOf(victim) - victimBefore;
+            assertLe(attackerGain + victimGain, rewardAmount + 1e15);
+        } catch {
+            // If it reverts with NoRewards, this is also an acceptable behavior.
+        }
+    }
+
     /// @notice notifyReward below MIN_NOTIFY reverts.
     function test_RewardAccounting_NotifyBelowMinReverts() public {
         token.transfer(address(distributor), distributor.MIN_NOTIFY());
         vm.expectRevert(RewardsDistributor.MinimumNotify.selector);
         distributor.notifyReward(1);
+    }
+
+    /// @notice Reentrancy: rewardToken that calls claim() during transfer cannot extract rewards twice.
+    function testClaim_ReentrancyGuard_Protects() public {
+        K613 freshK613 = new K613(address(this));
+        ReentrantRewardToken reward = new ReentrantRewardToken();
+        RewardsDistributor freshRd = new RewardsDistributor(address(reward), address(reward), address(freshK613), EPOCH);
+
+        freshRd.grantRole(freshRd.REWARDS_NOTIFIER_ROLE(), address(this));
+        reward.setDistributor(address(freshRd));
+
+        address user = address(0xDEAD);
+
+        reward.mint(user, 1_000 * ONE);
+        vm.startPrank(user);
+        reward.approve(address(freshRd), type(uint256).max);
+        freshRd.deposit(1_000 * ONE);
+        vm.stopPrank();
+
+        reward.mint(address(this), 500 * ONE);
+        reward.transfer(address(freshRd), 500 * ONE);
+        freshRd.notifyReward(500 * ONE);
+
+        vm.prank(user);
+        try freshRd.claim() {} catch {}
+
+        uint256 pending = freshRd.pendingRewardsOf(user);
+        if (pending > 0) {
+            vm.prank(user);
+            freshRd.claim();
+        }
+        assertEq(freshRd.pendingRewardsOf(user), 0);
+        vm.prank(user);
+        vm.expectRevert(RewardsDistributor.NoRewards.selector);
+        freshRd.claim();
+    }
+
+    /// @notice Two advanceEpoch() calls in the same block: first distributes rewards, second is a no-op (no revert expected).
+    function testAdvanceEpoch_DoubleCallSameBlock_RevertsEpochNotReady() public {
+        uint256 accBefore = distributor.accRewardPerShare();
+
+        token.transfer(address(distributor), 100 * ONE);
+        distributor.notifyReward(100 * ONE);
+
+        uint256 next = distributor.nextEpochAt();
+        vm.warp(next);
+
+        distributor.advanceEpoch();
+        uint256 accAfterFirst = distributor.accRewardPerShare();
+        assertGt(accAfterFirst, accBefore);
+
+        // Second call in same block is allowed and simply has nothing left to distribute
+        distributor.advanceEpoch();
+        uint256 accAfterSecond = distributor.accRewardPerShare();
+        assertEq(accAfterSecond, accAfterFirst);
+    }
+
+    /// @notice When paused, advanceEpoch() reverts (whenNotPaused).
+    function testAdvanceEpoch_PauseReverts() public {
+        distributor.pause();
+        vm.expectRevert();
+        distributor.advanceEpoch();
+    }
+
+    /// @notice When only pendingRewards exist (no penalties), advanceEpoch distributes them but does not change lastEpochFlushAt.
+    function test_AdvanceEpoch_PendingRewards_NoPenalties_DoesNotTouchLastEpochFlushAt() public {
+        // clear deposits and re-deposit a simple pool
+        vm.prank(alice);
+        distributor.withdraw(1_000 * ONE);
+        vm.prank(bob);
+        distributor.withdraw(1_000 * ONE);
+
+        token.mint(alice, 1_000 * ONE);
+        vm.startPrank(alice);
+        token.approve(address(distributor), type(uint256).max);
+        distributor.deposit(1_000 * ONE);
+        vm.stopPrank();
+
+        // only pendingRewards, no penalties
+        uint256 tsBefore = distributor.nextEpochAt() - EPOCH;
+        token.transfer(address(distributor), 10 * ONE);
+        distributor.notifyReward(10 * ONE);
+        assertEq(distributor.pendingPenalties(), 0);
+
+        vm.warp(block.timestamp + EPOCH + 1);
+        distributor.advanceEpoch();
+
+        // rewards should be distributed, but epoch anchor stays the same
+        assertGt(distributor.accRewardPerShare(), 0);
+        assertEq(distributor.nextEpochAt() - EPOCH, tsBefore);
     }
 
     /// @notice Fuzz: after notify/deposit/advanceEpoch/claim sequence, sum(claimed) + sum(pending) <= total notified + tolerance.

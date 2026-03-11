@@ -62,6 +62,9 @@ contract xK613 is ERC20, AccessControl, Pausable {
     /// @param account Address to update.
     /// @param allowed True to allow transfers, false to disallow.
     function setTransferWhitelist(address account, bool allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (account == address(0)) {
+            revert ZeroAddress();
+        }
         transferWhitelist[account] = allowed;
         emit TransferWhitelistUpdated(account, allowed);
     }
