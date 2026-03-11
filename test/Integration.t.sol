@@ -836,7 +836,7 @@ contract IntegrationTest is Test {
         distributor.claim();
     }
 
-    /// @notice Long idle: warp 10 epochs, notify rewards, advanceEpoch, one user instant-exit (penalty), then both claim; invariants hold. Работает и на форке с реальными токенами (useDeployed + --fork-url).
+    /// @notice Long idle: warp 10 epochs, notify rewards, advanceEpoch, one user instant-exit (penalty), then both claim; invariants hold. Also valid on forked mainnet tokens (useDeployed + --fork-url).
     function test_Integration_LongIdle_ThenEpochAndPenalties() public {
         _fundUser(alice, 1_000 * ONE);
         _fundUser(bob, 1_000 * ONE);
@@ -872,7 +872,7 @@ contract IntegrationTest is Test {
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
-    /// @notice Penalties only: no notify; alice instant-exit sends penalty to RD, advanceEpoch, both claim share of penalties. Работает на форке с реальными токенами.
+    /// @notice Penalties only: no notify; alice instant-exit sends penalty to RD, advanceEpoch, both claim share of penalties. Also valid on forked mainnet tokens.
     function test_Integration_PenaltiesOnly_NoNotify() public {
         _fundUser(alice, 1_000 * ONE);
         _fundUser(bob, 1_000 * ONE);
@@ -910,7 +910,7 @@ contract IntegrationTest is Test {
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
-    /// @notice Chain: instant exit → advanceEpoch → multiple claims (alice, bob, carol); invariants hold. Работает на форке с реальными токенами.
+    /// @notice Chain: instant exit → advanceEpoch → multiple claims (alice, bob, carol); invariants hold. Also valid on forked mainnet tokens.
     function test_Integration_InstantExit_AdvanceEpoch_MultipleClaims() public {
         _fundUser(alice, 800 * ONE);
         _fundUser(bob, 800 * ONE);

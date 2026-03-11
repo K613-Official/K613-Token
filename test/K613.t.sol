@@ -50,7 +50,7 @@ contract K613Test is Test {
         assertEq(token.totalSupply(), 2e18);
     }
 
-    /// @notice testBurnOnlyMinter: burnFrom from non-minter reverts with OnlyMinter; minter can burn and balance/totalSupply update.
+    /// @notice testBurnOnlyMinter: burnFrom from non-minter reverts with OnlyMinter; minter with allowance can burn and balance/totalSupply update.
     function testBurnOnlyMinter() public {
         vm.prank(minter);
         token.mint(alice, 3e18);
@@ -58,6 +58,10 @@ contract K613Test is Test {
         vm.prank(alice);
         vm.expectRevert(K613.OnlyMinter.selector);
         token.burnFrom(alice, 1e18);
+
+        // grant allowance to minter for burnFrom
+        vm.prank(alice);
+        token.approve(minter, 3e18);
 
         vm.prank(minter);
         token.burnFrom(alice, 1e18);

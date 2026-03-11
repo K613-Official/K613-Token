@@ -60,13 +60,17 @@ contract K613 is ERC20, AccessControl, Pausable {
         _mint(to, amount);
     }
 
-    /// @notice Burns tokens from the specified address. Caller must have MINTER_ROLE.
+    /// @notice Burns tokens from the specified address.
+    /// @dev Caller must have MINTER_ROLE and allowance from the token holder, mirroring standard ERC20 burnFrom semantics.
     /// @param from Address to burn tokens from.
     /// @param amount Amount of tokens to burn.
     function burnFrom(address from, uint256 amount) external {
         if (!hasRole(MINTER_ROLE, msg.sender)) {
             revert OnlyMinter();
         }
+        uint256 currentAllowance = allowance(from, msg.sender);
+        require(currentAllowance >= amount, "ERC20: burn amount exceeds allowance");
+        _spendAllowance(from, msg.sender, amount);
         _burn(from, amount);
     }
 

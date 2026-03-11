@@ -143,13 +143,15 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Claims accumulated rewards. Reverts while caller has an active exit vesting in Staking (withdraw from RD first, then exit; no claim during vesting).
     function claim() external nonReentrant whenNotPaused {
-        // aderyn-ignore-next-line(reentrancy-state-change)
-        if (address(staking) != address(0) && IStaking(staking).exitQueueLength(msg.sender) > 0) {
-            revert ExitVestingActive();
-        }
         _updateUser(msg.sender);
         uint256 reward = userPendingRewards[msg.sender];
         if (reward == 0) revert NoRewards();
+
+        //aderyn-ignore-next-line(reentrancy-state-change)
+        if (address(staking) != address(0) && IStaking(staking).exitQueueLength(msg.sender) > 0) {
+            userPendingRewards[msg.sender] = reward;
+            revert ExitVestingActive();
+        }
         userPendingRewards[msg.sender] = 0;
         _stakeHeldK613();
         rewardToken.safeTransfer(msg.sender, reward);

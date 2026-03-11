@@ -10,6 +10,17 @@ import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/Safe
 import {RewardsDistributor} from "../staking/RewardsDistributor.sol";
 import {Staking} from "../staking/Staking.sol";
 
+/// @notice Minimal swap router interface used by Treasury buyback operations.
+interface ISwapRouter {
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
+}
+
 /// @title Treasury
 /// @notice Manages K613 token flows: stakes K613 to get xK613 for rewards, executes buybacks. Rewards are distributed in xK613.
 contract Treasury is AccessControl, Pausable, ReentrancyGuard {
@@ -118,20 +129,20 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Executes a buyback: swaps tokenIn for K613 via a whitelisted router and optionally distributes to stakers.
-    /// @dev Router must be in routerWhitelist; it receives arbitrary calldata and must be trusted.
+    /// @dev Router must be in routerWhitelist and implement ISwapRouter; path must end in K613 and `to` is this contract.
     /// @param tokenIn Token to swap for K613.
     /// @param router DEX router address (must be whitelisted).
     /// @param amountIn Amount of tokenIn to swap.
-    /// @param data Calldata for the router's swap function.
     /// @param minK613Out Minimum K613 expected; reverts if output is lower.
+    /// @param path Swap path; last element must be K613.
     /// @param distributeRewards If true, transfers K613 to RewardsDistributor and notifies reward.
     /// @return k613Out Amount of K613 received from the swap.
     function buyback(
         address tokenIn,
         address router,
         uint256 amountIn,
-        bytes calldata data,
         uint256 minK613Out,
+        address[] calldata path,
         bool distributeRewards
     ) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused returns (uint256 k613Out) {
         if (tokenIn == address(0) || router == address(0)) {
@@ -141,10 +152,20 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
             revert ZeroAmount();
         }
         if (!routerWhitelist[router]) revert RouterNotWhitelisted();
+
+        // Validate path: must end in K613 to guarantee buyback semantics.
+        uint256 pathLength = path.length;
+        if (pathLength == 0 || path[pathLength - 1] != address(k613)) {
+            revert InsufficientOutput(); // reuse error to avoid adding new one; indicates invalid config
+        }
+
         uint256 k613Before = k613.balanceOf(address(this));
         IERC20(tokenIn).forceApprove(router, amountIn);
-        (bool success,) = router.call(data);
-        if (!success) {
+        try ISwapRouter(router)
+            .swapExactTokensForTokens(amountIn, minK613Out, path, address(this), block.timestamp) returns (
+            uint256[] memory
+        ) {}
+        catch {
             revert BuybackFailed();
         }
         IERC20(tokenIn).forceApprove(router, 0);
