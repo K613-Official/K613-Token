@@ -35,7 +35,7 @@ K613 staking contract, inspired by the xSHADOW model:
   - before `lockDuration` the user can call `instantExit(index)` to exit immediately, paying a penalty in `K613` at rate `instantExitPenaltyBps` (basis points);
 - the early-exit penalty is not burned: it is sent to `RewardsDistributor` and counted as extra rewards for remaining stakers;
 - the contract allows up to `MAX_EXIT_REQUESTS` active requests per user and is protected by `ReentrancyGuard`;
-- economic invariant: `xK613.totalSupply()` must always equal internal `_totalBacking` (and the `K613` balance held by staking), enforced by `backingIntegrity()`.
+- economic invariant: `xK613.totalSupply()` must always equal internal `_totalBacking`.
 
 **`RewardsDistributor` (src/staking/RewardsDistributor.sol)**  
 Contract that distributes rewards based on `xK613` deposits:
@@ -73,7 +73,7 @@ Protocol treasury managing `K613` flows:
 
 1. **1:1 backing of xK613**  
    Every `xK613` token is backed by exactly one `K613` held in the staking and/or rewards distributor contracts.  
-   Invariant: `xK613.totalSupply()` equals `Staking.totalBacking()` and the `K613` balance on Staking. Any breach (e.g. sending `K613` directly to the contract) is detected by `backingIntegrity()`.
+   Invariant: `xK613.totalSupply()` equals `Staking.totalBacking()`.
 
 2. **Rewards come from outside the protocol**  
    The protocol does not “create” yield by itself; rewards come from:

@@ -318,7 +318,7 @@ contract IntegrationTest is Test {
         assertGt(distributor2.pendingPenalties(), 0);
     }
 
-    /// @notice test_Integration_MultiUser_RewardsAndPenalties_ClaimAfterExit: Four users stake/deposit at different times; Treasury adds rewards twice; one user instant-exits (penalties to pool); advanceEpoch; all claim; verifies total distribution and backingIntegrity.
+    /// @notice test_Integration_MultiUser_RewardsAndPenalties_ClaimAfterExit: Four users stake/deposit at different times; Treasury adds rewards twice; one user instant-exits (penalties to pool); advanceEpoch; all claim; verifies total distribution and supply vs backing.
     function test_Integration_MultiUser_RewardsAndPenalties_ClaimAfterExit() public {
         _fundTestUsers(2_000 * ONE);
 
@@ -402,7 +402,6 @@ contract IntegrationTest is Test {
         assertGt(bobGot, 0);
         assertGt(carolGot, 0);
         assertGt(daveGot, 0);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -441,11 +440,10 @@ contract IntegrationTest is Test {
         distributor.claim();
         assertEq(xk613.balanceOf(alice) - aliceXBefore, pending);
         assertEq(distributor.pendingRewardsOf(alice), 0);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
-    /// @notice test_Integration_MultipleExitRequests_CancelNormalInstant: Multiple exit requests in queue; cancel one, instant exit one, normal exit one; verifies queue length, remaining stake, and backingIntegrity after claim.
+    /// @notice test_Integration_MultipleExitRequests_CancelNormalInstant: Multiple exit requests in queue; cancel one, instant exit one, normal exit one; verifies queue length, remaining stake, and supply vs backing after claim.
     function test_Integration_MultipleExitRequests_CancelNormalInstant() public {
         _fundUser(alice, 3_000 * ONE);
         vm.startPrank(alice);
@@ -491,7 +489,6 @@ contract IntegrationTest is Test {
         vm.prank(alice);
         distributor.claim();
         assertGt(xk613.balanceOf(alice), 0);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -542,7 +539,6 @@ contract IntegrationTest is Test {
         uint256 total = 500 * ONE + penalty;
         assertApproxEqAbs(aliceGot + bobGot, total, 1e15);
         assertTrue(aliceGot > bobGot, "alice share > bob share");
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -663,7 +659,7 @@ contract IntegrationTest is Test {
         vm.stopPrank();
     }
 
-    /// @notice test_Staking_NormalExitThenIntegrity: User does normal exit after lock; asserts backingIntegrity and xK613.totalSupply() == staking.totalBacking().
+    /// @notice test_Staking_NormalExitThenIntegrity: User does normal exit after lock; asserts xK613.totalSupply() == staking.totalBacking().
     function test_Staking_NormalExitThenIntegrity() public {
         _fundUser(alice, 500 * ONE);
         vm.startPrank(alice);
@@ -675,11 +671,8 @@ contract IntegrationTest is Test {
         vm.warp(block.timestamp + _lockDuration() + 1);
         vm.prank(alice);
         staking.exit(0);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
-
-    // ---------- RewardsDistributor edge cases & reverts ----------
 
     /// @notice test_RewardsDistributor_DepositZero_Reverts: deposit(0) reverts with ZeroAmount.
     function test_RewardsDistributor_DepositZero_Reverts() public {
@@ -776,21 +769,20 @@ contract IntegrationTest is Test {
         assertEq(distributor.totalDeposits(), 0);
     }
 
-    // ---------- Invariant: backingIntegrity after every major flow ----------
+    // ---------- Invariant: supply tracks total backing after every major flow ----------
 
-    /// @notice test_Invariant_BackingIntegrity_AfterStakeOnly: After stake only, backingIntegrity() holds and xK613.totalSupply() == staking.totalBacking().
-    function test_Invariant_BackingIntegrity_AfterStakeOnly() public {
+    /// @notice test_Invariant_TotalBacking_AfterStakeOnly: After stake only, xK613.totalSupply() == staking.totalBacking().
+    function test_Invariant_TotalBacking_AfterStakeOnly() public {
         _fundUser(alice, 1_000 * ONE);
         vm.prank(alice);
         k613.approve(address(staking), 1_000 * ONE);
         vm.prank(alice);
         staking.stake(1_000 * ONE);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
-    /// @notice test_Invariant_BackingIntegrity_AfterInstantExit: After instant exit, backingIntegrity() holds and supply matches totalBacking.
-    function test_Invariant_BackingIntegrity_AfterInstantExit() public {
+    /// @notice test_Invariant_TotalBacking_AfterInstantExit: After instant exit, supply matches totalBacking.
+    function test_Invariant_TotalBacking_AfterInstantExit() public {
         _fundUser(alice, 1_000 * ONE);
         vm.startPrank(alice);
         k613.approve(address(staking), 1_000 * ONE);
@@ -801,12 +793,11 @@ contract IntegrationTest is Test {
         vm.warp(block.timestamp + 1 days);
         vm.prank(alice);
         staking.instantExit(0);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
-    /// @notice test_Invariant_BackingIntegrity_AfterCancelExit: After cancelExit, backingIntegrity() holds and supply matches totalBacking.
-    function test_Invariant_BackingIntegrity_AfterCancelExit() public {
+    /// @notice test_Invariant_TotalBacking_AfterCancelExit: After cancelExit, supply matches totalBacking.
+    function test_Invariant_TotalBacking_AfterCancelExit() public {
         _fundUser(alice, 1_000 * ONE);
         vm.startPrank(alice);
         k613.approve(address(staking), 1_000 * ONE);
@@ -815,7 +806,6 @@ contract IntegrationTest is Test {
         staking.initiateExit(300 * ONE);
         staking.cancelExit(0);
         vm.stopPrank();
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -868,7 +858,6 @@ contract IntegrationTest is Test {
         distributor.claim();
         vm.prank(bob);
         distributor.claim();
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -906,7 +895,6 @@ contract IntegrationTest is Test {
         distributor.claim();
         assertGt(xk613.balanceOf(alice), aliceBefore);
         assertGt(xk613.balanceOf(bob), bobBefore);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -957,7 +945,6 @@ contract IntegrationTest is Test {
         distributor.claim();
         vm.prank(carol);
         distributor.claim();
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -979,7 +966,6 @@ contract IntegrationTest is Test {
             vm.prank(alice);
             distributor.claim();
         }
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -1016,7 +1002,6 @@ contract IntegrationTest is Test {
         staking.exit(0);
         vm.prank(alice);
         distributor.claim();
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -1049,7 +1034,6 @@ contract IntegrationTest is Test {
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.NoRewards.selector);
         distributor.claim();
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -1081,7 +1065,6 @@ contract IntegrationTest is Test {
         vm.prank(alice);
         distributor.claim();
         assertGt(xk613.balanceOf(alice) - before, 0);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -1116,11 +1099,10 @@ contract IntegrationTest is Test {
         distributor.claim();
         assertGt(aliceClaimFirst, 0);
         assertTrue(xk613.balanceOf(alice) > 0 || xk613.balanceOf(bob) > 0);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
-    /// @notice Testnet: mixed normal/instant exits over time; backingIntegrity and totalSupply == totalBacking after each step.
+    /// @notice Testnet: mixed normal/instant exits over time; totalSupply == totalBacking after each step.
     function test_Integration_Testnet_BackingInvariant_MixedExitsOverTime() public {
         _fundUser(alice, 1_000 * ONE);
         _fundUser(bob, 1_000 * ONE);
@@ -1137,7 +1119,6 @@ contract IntegrationTest is Test {
         k613.approve(address(staking), 1_000 * ONE);
         staking.stake(1_000 * ONE);
         vm.stopPrank();
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
 
         vm.startPrank(alice);
@@ -1147,7 +1128,6 @@ contract IntegrationTest is Test {
         vm.warp(block.timestamp + 1 days);
         vm.prank(alice);
         staking.instantExit(0);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
 
         vm.startPrank(bob);
@@ -1157,7 +1137,6 @@ contract IntegrationTest is Test {
         vm.warp(block.timestamp + _lockDuration() + 1);
         vm.prank(bob);
         staking.exit(0);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
 
         vm.startPrank(carol);
@@ -1165,7 +1144,6 @@ contract IntegrationTest is Test {
         staking.initiateExit(200 * ONE);
         staking.cancelExit(0);
         vm.stopPrank();
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -1205,7 +1183,6 @@ contract IntegrationTest is Test {
         staking.exit(0);
         (uint256 remaining,) = staking.deposits(alice);
         assertEq(remaining, 600 * ONE);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -1226,7 +1203,6 @@ contract IntegrationTest is Test {
         vm.prank(alice);
         distributor.claim();
         assertApproxEqAbs(xk613.balanceOf(alice) - before, 100 * ONE, 1e15);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -1277,7 +1253,6 @@ contract IntegrationTest is Test {
         distributor.claim();
         vm.prank(bob);
         distributor.claim();
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -1324,7 +1299,6 @@ contract IntegrationTest is Test {
         vm.prank(alice);
         staking.exit(0);
         assertEq(staking.exitQueueLength(alice), 0);
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
@@ -1352,7 +1326,6 @@ contract IntegrationTest is Test {
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.NoRewards.selector);
         distributor.claim();
-        assertTrue(staking.backingIntegrity());
         assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 }

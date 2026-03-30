@@ -11,8 +11,8 @@ import {Treasury} from "../src/treasury/Treasury.sol";
 /// @title DeployK613
 /// @notice Deploys K613 staking stack on Arbitrum Sepolia testnet.
 contract DeployK613 is Script {
-    uint256 private constant LOCK_DURATION = 90 days;
-    uint256 private constant EPOCH_DURATION = 7 days;
+    uint256 private constant LOCK_DURATION = 120;
+    uint256 private constant EPOCH_DURATION = 120;
     uint256 private constant INSTANT_EXIT_PENALTY_BPS = 5000;
 
     uint256 private constant ARBITRUM_SEPOLIA = 421_614;

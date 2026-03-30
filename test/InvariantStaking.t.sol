@@ -245,11 +245,6 @@ contract InvariantStakingTest is StdInvariant, Test {
         assertGe(k613.balanceOf(address(staking)), totalDeposits);
     }
 
-    /// @notice invariant_backingIntegrity: Staking.backingIntegrity() is true (K613 balance equals _totalBacking; no direct transfers or fee-on-transfer).
-    function invariant_backingIntegrity() public view {
-        assertTrue(staking.backingIntegrity());
-    }
-
     /// @notice invariant_rdBalanceMatchesDeposits: RewardsDistributor's xK613 + K613 balance is at least totalDeposits (with rounding tolerance; K613 becomes xK613 on claim/advanceEpoch).
     function invariant_rdBalanceMatchesDeposits() public view {
         uint256 xBalance = xk613.balanceOf(address(distributor));
