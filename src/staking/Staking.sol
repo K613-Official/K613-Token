@@ -195,14 +195,6 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         return _totalBacking;
     }
 
-    /// @notice Invariant: K613 held by this contract must equal internal accounting (_totalBacking).
-    /// @dev Returns false if someone sent K613 directly, or token is fee-on-transfer, or accounting bug.
-    /// @return True if balance is exactly _totalBacking (no strict equality to satisfy static analysis).
-    function backingIntegrity() external view returns (bool) {
-        uint256 balance = k613.balanceOf(address(this));
-        return balance >= _totalBacking && balance <= _totalBacking;
-    }
-
     /// @notice Computes the sum of all amounts pending exit for a user.
     /// @param user Address of the user.
     /// @return sum Total amount pending exit across the user's queue.

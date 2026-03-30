@@ -27,11 +27,8 @@ contract ReentrantRewardToken is ERC20 {
         bool ok = super.transfer(to, amount);
         if (!inCallback && address(distributor) != address(0)) {
             inCallback = true;
-            // Попытка реэнтрантно вызвать claim() во время выплаты
-            try distributor.claim() {}
-                catch {
-                // ожидаем revert из-за ReentrancyGuard
-            }
+
+            try distributor.claim() {} catch {}
             inCallback = false;
         }
         return ok;

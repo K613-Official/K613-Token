@@ -59,7 +59,7 @@ contract StakingTest is Test {
         staking.stake(0);
     }
 
-    /// @notice test_Stake_CanAddMore: Multiple stakes from same user accumulate; backingIntegrity holds.
+    /// @notice test_Stake_CanAddMore: Multiple stakes from same user accumulate.
     function test_Stake_CanAddMore() public {
         vm.startPrank(alice);
         k613.approve(address(staking), 200 * ONE);
@@ -70,16 +70,15 @@ contract StakingTest is Test {
         (uint256 amount,) = staking.deposits(alice);
         assertEq(amount, 150 * ONE);
         assertEq(xk613.balanceOf(alice), 150 * ONE);
-        assertTrue(staking.backingIntegrity());
     }
 
-    /// @notice test_BackingIntegrity_HoldsAfterStakeAndExit: backingIntegrity holds after stake and after full exit (initiateExit → wait lock → exit).
-    function test_BackingIntegrity_HoldsAfterStakeAndExit() public {
+    /// @notice test_TotalBacking_HoldsAfterStakeAndExit: total backing and supply match after stake and full exit (initiateExit → wait lock → exit).
+    function test_TotalBacking_HoldsAfterStakeAndExit() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
         vm.prank(alice);
         staking.stake(100 * ONE);
-        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
 
         vm.prank(alice);
         xk613.approve(address(staking), 100 * ONE);
@@ -88,7 +87,7 @@ contract StakingTest is Test {
         vm.warp(block.timestamp + LOCK_DURATION);
         vm.prank(alice);
         staking.exit(0);
-        assertTrue(staking.backingIntegrity());
+        assertEq(xk613.totalSupply(), staking.totalBacking());
     }
 
     /// @notice test_InitiateExit_StartsCountdown: initiateExit creates queue entry with exitInitiatedAt; exitRequestAt returns correct amount and timestamp.
@@ -206,7 +205,7 @@ contract StakingTest is Test {
         staking.exit(0);
     }
 
-    /// @notice test_Exit_AfterLockSuccess: After lock, exit(0) burns xK613 and returns K613 to user; backingIntegrity holds.
+    /// @notice test_Exit_AfterLockSuccess: After lock, exit(0) burns xK613 and returns K613 to user.
     function test_Exit_AfterLockSuccess() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -417,7 +416,7 @@ contract StakingTest is Test {
         assertEq(staking.exitQueueLength(alice), 0);
     }
 
-    /// @notice test_ExitAfterCancelAndReinitiate: Cancel one exit, re-initiate same amount, wait lock, exit; user gets K613 back and backingIntegrity holds.
+    /// @notice test_ExitAfterCancelAndReinitiate: Cancel one exit, re-initiate same amount, wait lock, exit; user gets K613 back and supply tracks backing.
     function test_ExitAfterCancelAndReinitiate() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
@@ -683,7 +682,6 @@ contract StakingTest is Test {
 
         // Check after stakes
         assertEq(xk613.totalSupply(), staking.totalBacking());
-        assertTrue(staking.backingIntegrity());
 
         // Alice initiates and completes standard exit
         vm.startPrank(alice);
@@ -694,7 +692,6 @@ contract StakingTest is Test {
         vm.stopPrank();
 
         assertEq(xk613.totalSupply(), staking.totalBacking());
-        assertTrue(staking.backingIntegrity());
 
         // Bob uses instantExit
         vm.startPrank(bob);
@@ -705,21 +702,19 @@ contract StakingTest is Test {
         vm.stopPrank();
 
         assertEq(xk613.totalSupply(), staking.totalBacking());
-        assertTrue(staking.backingIntegrity());
     }
 
-    /// @notice Direct K613 transfers to staking contract break backingIntegrity (detects stray transfers / fee-on-transfer tokens).
-    function test_BackingIntegrity_BreaksOnDirectK613Transfer() public {
+    /// @notice Direct K613 transfers to staking contract do not change tracked total backing.
+    function test_DirectK613Transfer_DoesNotChangeTotalBacking() public {
         vm.prank(alice);
         k613.approve(address(staking), 100 * ONE);
         vm.prank(alice);
         staking.stake(100 * ONE);
-        assertTrue(staking.backingIntegrity());
+        assertEq(staking.totalBacking(), 100 * ONE);
 
-        // Send extra K613 directly to Staking without updating _totalBacking
         vm.prank(alice);
         k613.transfer(address(staking), 10 * ONE);
 
-        assertFalse(staking.backingIntegrity());
+        assertEq(staking.totalBacking(), 100 * ONE);
     }
 }

@@ -14,3 +14,9 @@ docs/
 .cursor
 .broadcast
 script/COMMANDS.md
+script/EconomicAnalysis.s.sol
+script/EconomicSimulator.s.sol
+script/FullEconomicCycle.s.sol
+script/QuickEconomicsCalc.s.sol
+script/RUN_EXAMPLES.md
+script/SIMULATION_README.md
