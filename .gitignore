@@ -14,5 +14,5 @@ docs/
 .cursor
 .broadcast
 script/COMMANDS.md
-script/LENDING_INTEGRATION_GUIDE
-script/LendingEconomicsAnalysis
+script/LENDING_INTEGRATION_GUIDE.md
+script/LendingEconomicsAnalysis.s.sol
