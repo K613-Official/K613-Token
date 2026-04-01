@@ -45,36 +45,15 @@ library DataTypes {
 }
 
 /// @title FullLendingEconomyCycle
-/// @notice Complete K613 + Aave integration lifecycle simulation
-///
-/// Scenario:
-/// Cycle 1:
-///   - Admin mints K613 for supply/borrow tokens
-///   - User A supplies collateral to Aave
-///   - User A stakes K613
-///   - User B borrows from Aave
-///   - Users earn supply/borrow rewards
-///
-/// Cycles 2+:
-///   - Claim rewards
-///   - Compound stakes
-///   - Admin collects fees and does buyback simulation
-///   - Staking rewards distribute to K613 stakers
 contract FullLendingEconomyCycle is Script {
     // === CONFIG ===
     uint256 private constant LOCK_DURATION = 120;
     uint256 private constant EPOCH_DURATION = 120;
     uint256 private constant INSTANT_EXIT_PENALTY_BPS = 5000;
 
-    // Supply token (for Aave) - typically USDC or similar
-    // For simulation, we'll use K613 itself or a mock
-    address private constant SUPPLY_TOKEN = address(0); // Set via env
-
-    // Borrow token (for Aave) - same as supply for simplicity
-    address private constant BORROW_TOKEN = address(0); // Set via env
-
-    // Aave Pool
-    address private constant AAVE_POOL = address(0); // Set via env
+    address private constant SUPPLY_TOKEN = address(0);
+    address private constant BORROW_TOKEN = address(0);
+    address private constant AAVE_POOL = address(0);
 
     // Time periods
     uint256 private constant CYCLE_1_DURATION = 7 days;
