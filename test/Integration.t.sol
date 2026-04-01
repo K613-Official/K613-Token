@@ -761,15 +761,11 @@ contract IntegrationTest is Test {
         assertGt(distributor.pendingRewardsOf(alice), 0);
     }
 
-    // ---------- Treasury (depositRewards zero is no-op per spec) ----------
-
     /// @notice test_Treasury_DepositRewardsZero_NoRevert: depositRewards(0) does not revert (no-op); totalDeposits remains 0.
     function test_Treasury_DepositRewardsZero_NoRevert() public {
         treasury.depositRewards(0);
         assertEq(distributor.totalDeposits(), 0);
     }
-
-    // ---------- Invariant: supply tracks total backing after every major flow ----------
 
     /// @notice test_Invariant_TotalBacking_AfterStakeOnly: After stake only, xK613.totalSupply() == staking.totalBacking().
     function test_Invariant_TotalBacking_AfterStakeOnly() public {
