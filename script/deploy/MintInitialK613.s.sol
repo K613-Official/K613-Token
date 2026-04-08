@@ -2,7 +2,7 @@
 pragma solidity 0.8.34;
 
 import {Script, console} from "forge-std/Script.sol";
-import {K613} from "../src/token/K613.sol";
+import {K613} from "src/token/K613.sol";
 
 /// @title MintInitialK613
 /// @notice Mints initial K613 supply to deployer

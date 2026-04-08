@@ -1,20 +1,31 @@
 {
-  "lib/L2-Protocol": {
-    "rev": "e264f8f1ebf49cdd7d7a7ca386c65ccd59ad9101"
-  },
+
   "lib/forge-std": {
     "tag": {
       "name": "v1.14.0",
       "rev": "1801b0541f4fda118a10798fd3486bb7051c5dd6"
     }
   },
+
   "lib/openzeppelin-contracts": {
     "tag": {
       "name": "v5.5.0",
       "rev": "fcbae5394ae8ad52d8e580a3477db99814b9d565"
     }
   },
-  "lib/shadow-core": {
-    "rev": "bb3fa4fc6a257aee99cdcf58a0b8b38e51d4a9f7"
+
+  "lib/swap-router-contracts": {
+    "tag": {
+      "name": "v1.3.0",
+      "rev": "c696aada49b33c8e764e6f0bd0a0a56bd8aa455f"
+    }
+  },
+
+  },
+  "lib/v3-core": {
+    "tag": {
+      "name": "v1.0.0",
+      "rev": "e3589b192d0be27e100cd0daaf6c97204fdb1899"
+    }
   }
 }

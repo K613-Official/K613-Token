@@ -14,9 +14,9 @@ interface ICollectorTransfer {
 contract TransferFromCollectorToTreasury is Script {
     function run() external {
         address collectorProxy = vm.envAddress("COLLECTOR_PROXY_ADDRESS");
-        address treasury = vm.envAddress("K613_TREASURY_ADDRESS");
+        address treasury = vm.envAddress("TREASURY_ADDRESS");
         address token = vm.envAddress("TOKEN_ADDRESS");
-        uint256 amount = vm.envOr("AMOUNT", type(uint256).max);
+        uint256 amount = vm.envOr("AMOUNT_TO_TRANSFER", type(uint256).max);
 
         if (amount == type(uint256).max) {
             amount = IERC20(token).balanceOf(collectorProxy);

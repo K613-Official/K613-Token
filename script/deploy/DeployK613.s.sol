@@ -2,11 +2,11 @@
 pragma solidity 0.8.34;
 
 import {Script, console} from "forge-std/Script.sol";
-import {K613} from "../src/token/K613.sol";
-import {xK613} from "../src/token/xK613.sol";
-import {Staking} from "../src/staking/Staking.sol";
-import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
-import {Treasury} from "../src/treasury/Treasury.sol";
+import {K613} from "src/token/K613.sol";
+import {xK613} from "src/token/xK613.sol";
+import {Staking} from "src/staking/Staking.sol";
+import {RewardsDistributor} from "src/staking/RewardsDistributor.sol";
+import {Treasury} from "src/treasury/Treasury.sol";
 
 /// @title DeployK613
 /// @notice Deploys K613 staking stack on Arbitrum Sepolia testnet.
@@ -16,10 +16,6 @@ contract DeployK613 is Script {
     uint256 private constant INSTANT_EXIT_PENALTY_BPS = 5000;
 
     uint256 private constant ARBITRUM_SEPOLIA = 421_614;
-
-    // Uniswap on Arbitrum Sepolia
-    address private constant UNISWAP_SWAPROUTER02_ARB_SEPOLIA = 0x101F443B4d1b059569D643917553c771E1b9663E;
-    address private constant UNISWAP_UNIVERSAL_ROUTER_ARB_SEPOLIA = 0x4A7b5Da61326A6379179b40d00F57E5bbDC962c2;
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -67,8 +63,7 @@ contract DeployK613 is Script {
         // RewardsDistributor: Treasury gets REWARDS_NOTIFIER_ROLE
         distributor.grantRole(distributor.REWARDS_NOTIFIER_ROLE(), address(treasury));
 
-        // Treasury: whitelist Uniswap routers for buyback (by chain)
-        _whitelistRouters(treasury);
+        _logTreasuryBuybackRouterNotice();
 
         vm.stopBroadcast();
 
@@ -76,12 +71,12 @@ contract DeployK613 is Script {
         _logSummary(address(k613), address(xk613), address(staking), address(distributor), address(treasury));
     }
 
-    /// @notice Whitelists Uniswap SwapRouter02 and UniversalRouter for Arbitrum Sepolia
-    function _whitelistRouters(Treasury treasury) internal {
-        require(block.chainid == ARBITRUM_SEPOLIA, "DeployK613: Arbitrum Sepolia only");
-        treasury.setRouterWhitelist(UNISWAP_SWAPROUTER02_ARB_SEPOLIA, true);
-        treasury.setRouterWhitelist(UNISWAP_UNIVERSAL_ROUTER_ARB_SEPOLIA, true);
-        console.log("  Treasury: whitelisted SwapRouter02 + UniversalRouter (Arbitrum Sepolia)");
+    function _logTreasuryBuybackRouterNotice() internal view {
+        if (block.chainid != ARBITRUM_SEPOLIA) return;
+        console.log("Treasury.buybackV3ExactInputSingle calls exactInputSingle on SwapRouter02 (Uniswap V3 periphery).");
+        console.log(
+            "Arbitrum Sepolia SwapRouter02 0x101F443B4d1b059569D643917553c771E1b9663E; whitelist via setRouterWhitelist. Universal Router uses a different ABI."
+        );
     }
 
     function _logSummary(address k613_, address xk613_, address staking_, address distributor_, address treasury_)

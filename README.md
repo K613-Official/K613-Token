@@ -61,10 +61,10 @@ Protocol treasury managing `K613` flows:
   - treasury receives `K613` from the admin/DAO;
   - stakes it in `Staking`, receiving 1:1 `xK613`;
   - sends `xK613` to `RewardsDistributor` and calls `notifyReward`, increasing the rewards pool for everyone who deposited `xK613`;
-- **buyback** flow (`buyback`):
-  - via whitelisted DEX routers (`routerWhitelist`) the treasury can swap any `tokenIn` for `K613`;
-  - a minimum expected output `minK613Out` is enforced; the call reverts if output is lower;
-  - with `distributeRewards` set, the bought `K613` can be staked, converted to `xK613`, and sent to `RewardsDistributor` as another reward source;
+- **buyback** flow (`buybackV3ExactInputSingle`):
+  - via whitelisted DEX routers (`routerWhitelist`) the treasury swaps a single-hop Uniswap V3 path (`tokenIn` → `K613` at `poolFee`) using the router’s `exactInputSingle` (SwapRouter02-style ABI);
+  - `tokenIn` must not be `K613`; a minimum expected output `minK613Out` is enforced;
+  - with `distributeRewards` set, the received `K613` is staked, converted to `xK613`, and sent to `RewardsDistributor` as another reward source;
 - admin can withdraw arbitrary ERC‑20 tokens (`withdraw`) and pause the treasury.
 
 ---
@@ -78,7 +78,7 @@ Protocol treasury managing `K613` flows:
 2. **Rewards come from outside the protocol**  
    The protocol does not “create” yield by itself; rewards come from:
    - DAO/treasury allocations via `Treasury.depositRewards`, turning `K613` into `xK613` and adding it to the pool;
-   - buybacks and redistribution of external revenue: any tokens received by the protocol (e.g. fees) can be swapped for `K613` via `Treasury.buyback`, staked, and distributed to stakers.
+   - buybacks and redistribution of external revenue: tokens received by the protocol (e.g. fees) can be swapped for `K613` via `Treasury.buybackV3ExactInputSingle`, staked, and distributed to stakers.
 
 3. **Early-exit penalties boost yield for remaining stakers**  
    - on `instantExit` the user pays a penalty in `K613` (a percentage set by `instantExitPenaltyBps`);
@@ -104,7 +104,7 @@ Protocol treasury managing `K613` flows:
    - (Optional) User deposits some or all `xK613` in `RewardsDistributor.deposit` to participate in reward distribution.
 
 2. **Claiming rewards**
-   - DAO/treasury funds the rewards pool via `Treasury.depositRewards` or `buyback` with `distributeRewards = true`.
+   - DAO/treasury funds the rewards pool via `Treasury.depositRewards` or `buybackV3ExactInputSingle` with `distributeRewards = true`.
    - When enough time has passed or penalties have accumulated, `advanceEpoch()` is called (or distribution happens lazily on `deposit`/`withdraw`/`claim`).
    - User calls `claim()` on `RewardsDistributor`, provided they have no active exit queue in `Staking`.
 
