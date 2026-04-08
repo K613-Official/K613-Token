@@ -2,7 +2,6 @@
 pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
-import {IAccessControl} from "openzeppelin-contracts/contracts/access/IAccessControl.sol";
 import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {K613} from "../src/token/K613.sol";
@@ -10,49 +9,8 @@ import {xK613} from "../src/token/xK613.sol";
 import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
 import {Staking} from "../src/staking/Staking.sol";
 import {Treasury} from "../src/treasury/Treasury.sol";
+import {IV3SwapRouter} from "swap-router-contracts/contracts/interfaces/IV3SwapRouter.sol";
 
-contract MockRouter {
-    K613 public k613;
-    bool public shouldFail;
-    bool public shouldReturnInsufficient;
-
-    constructor(address _k613) {
-        k613 = K613(_k613);
-    }
-
-    function setShouldFail(bool _fail) external {
-        shouldFail = _fail;
-    }
-
-    function setShouldReturnInsufficient(bool _insufficient) external {
-        shouldReturnInsufficient = _insufficient;
-    }
-
-    function swapExactTokensForTokens(
-        uint256 amountIn,
-        uint256,
-        /*amountOutMin*/
-        address[] calldata,
-        /*path*/
-        address to,
-        uint256 /*deadline*/
-    )
-        external
-        returns (uint256[] memory amounts)
-    {
-        if (shouldFail) revert("swap failed");
-        if (shouldReturnInsufficient) {
-            k613.transfer(to, 1);
-        } else {
-            k613.transfer(to, 1e18);
-        }
-        amounts = new uint256[](2);
-        amounts[0] = amountIn;
-        amounts[1] = shouldReturnInsufficient ? 1 : 1e18;
-    }
-}
-
-/// @dev Minimal ERC20 for buyback tests with a token other than K613.
 contract MockToken is ERC20 {
     constructor() ERC20("Mock", "M") {}
 
@@ -61,33 +19,35 @@ contract MockToken is ERC20 {
     }
 }
 
-/// @dev Router that pulls tokenIn from caller and sends K613 (for buyback with "other" token).
-contract MockRouterOtherToken {
+contract MockV3Router02 {
     K613 public k613;
-    address public tokenIn;
+    IERC20 public tokenInErc;
+    bool public shouldFail;
+    uint256 public outAmount;
 
     constructor(address _k613, address _tokenIn) {
         k613 = K613(_k613);
-        tokenIn = _tokenIn;
+        tokenInErc = IERC20(_tokenIn);
+        outAmount = 1e18;
     }
 
-    function swapExactTokensForTokens(
-        uint256 amountIn,
-        uint256,
-        /*amountOutMin*/
-        address[] calldata,
-        /*path*/
-        address to,
-        uint256 /*deadline*/
-    )
+    function setShouldFail(bool v) external {
+        shouldFail = v;
+    }
+
+    function setOutAmount(uint256 v) external {
+        outAmount = v;
+    }
+
+    function exactInputSingle(IV3SwapRouter.ExactInputSingleParams calldata p)
         external
-        returns (uint256[] memory amounts)
+        payable
+        returns (uint256 amountOut)
     {
-        IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
-        k613.transfer(to, 1e18);
-        amounts = new uint256[](2);
-        amounts[0] = amountIn;
-        amounts[1] = 1e18;
+        if (shouldFail) revert("v3 swap failed");
+        tokenInErc.transferFrom(msg.sender, address(this), p.amountIn);
+        amountOut = outAmount;
+        k613.transfer(p.recipient, amountOut);
     }
 }
 
@@ -102,6 +62,7 @@ contract TreasuryTest is Test {
     Treasury private treasury;
 
     address private alice = address(0xA11CE);
+    uint24 private constant POOL_FEE = 3000;
 
     function setUp() public {
         k613 = new K613(address(this));
@@ -130,18 +91,16 @@ contract TreasuryTest is Test {
         treasury.depositRewards(100 * ONE);
     }
 
-    /// @notice Only DEFAULT_ADMIN_ROLE can call buyback; non-admin call reverts.
-    function testBuyback_OnlyAdmin() public {
-        MockRouter router = new MockRouter(address(k613));
-        treasury.setRouterWhitelist(address(router), true);
+    /// @notice Only DEFAULT_ADMIN_ROLE can call buybackV3; non-admin call reverts.
+    function testBuybackV3_OnlyAdmin() public {
+        MockToken other = new MockToken();
+        other.mint(address(treasury), ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(other));
         k613.mint(address(router), 100 * ONE);
-
+        treasury.setRouterWhitelist(address(router), true);
         vm.prank(alice);
         vm.expectRevert();
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
-        treasury.buyback(address(k613), address(router), 1 * ONE, 0, path, false);
+        treasury.buybackV3ExactInputSingle(address(other), address(router), 1, 0, POOL_FEE, false);
     }
 
     /// @notice testDepositRewards_ZeroNoop: depositRewards(0) is a no-op; accRewardPerShare unchanged.
@@ -164,6 +123,28 @@ contract TreasuryTest is Test {
         vm.prank(alice);
         vm.expectRevert();
         treasury.withdraw(address(k613), alice, 100 * ONE);
+    }
+
+    function testApproveXk613PullRewards_OnlyAdmin() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        treasury.approveXk613PullRewards(address(0xBEEF), type(uint256).max);
+    }
+
+    function testApproveXk613PullRewards_ZeroSpenderReverts() public {
+        vm.expectRevert(Treasury.ZeroAddress.selector);
+        treasury.approveXk613PullRewards(address(0), 1);
+    }
+
+    function testApproveXk613PullRewards_SuccessAndRevoke() public {
+        address spender = address(0xBEEF);
+        xk613.mint(address(treasury), 10 * ONE);
+        vm.expectEmit(true, false, false, true);
+        emit Treasury.Xk613PullAllowanceSet(spender, type(uint256).max);
+        treasury.approveXk613PullRewards(spender, type(uint256).max);
+        assertEq(xk613.allowance(address(treasury), spender), type(uint256).max);
+        treasury.approveXk613PullRewards(spender, 0);
+        assertEq(xk613.allowance(address(treasury), spender), 0);
     }
 
     /// @notice testWithdraw_ZeroAddressReverts: withdraw with token or to address zero reverts with ZeroAddress.
@@ -189,36 +170,29 @@ contract TreasuryTest is Test {
         assertEq(k613.balanceOf(alice), bal);
     }
 
-    /// @notice testBuyback_ZeroTokenInReverts: buyback with tokenIn zero reverts with ZeroAddress.
-    function testBuyback_ZeroTokenInReverts() public {
+    function testBuybackV3_ZeroTokenInReverts() public {
         vm.expectRevert(Treasury.ZeroAddress.selector);
-        address[] memory empty;
-        treasury.buyback(address(0), address(0x1), 1, 0, empty, false);
+        treasury.buybackV3ExactInputSingle(address(0), address(0x1), 1, 0, POOL_FEE, false);
     }
 
-    /// @notice testBuyback_ZeroRouterReverts: buyback with router zero reverts with ZeroAddress.
-    function testBuyback_ZeroRouterReverts() public {
+    function testBuybackV3_ZeroRouterReverts() public {
+        MockToken other = new MockToken();
         vm.expectRevert(Treasury.ZeroAddress.selector);
-        address[] memory empty;
-        treasury.buyback(address(k613), address(0), 1, 0, empty, false);
+        treasury.buybackV3ExactInputSingle(address(other), address(0), 1, 0, POOL_FEE, false);
     }
 
-    /// @notice testBuyback_ZeroAmountReverts: buyback with amountIn zero reverts with ZeroAmount.
-    function testBuyback_ZeroAmountReverts() public {
+    function testBuybackV3_ZeroAmountReverts() public {
+        MockToken other = new MockToken();
         vm.expectRevert(Treasury.ZeroAmount.selector);
-        address[] memory empty;
-        treasury.buyback(address(k613), address(0x1), 0, 0, empty, false);
+        treasury.buybackV3ExactInputSingle(address(other), address(0x1), 0, 0, POOL_FEE, false);
     }
 
-    /// @notice testBuyback_RouterNotWhitelistedReverts: buyback with non-whitelisted router reverts with RouterNotWhitelisted.
-    function testBuyback_RouterNotWhitelistedReverts() public {
-        MockRouter router = new MockRouter(address(k613));
-        k613.mint(address(router), 100 * ONE);
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
-        vm.expectRevert(Treasury.RouterNotWhitelisted.selector);
-        treasury.buyback(address(k613), address(router), 1, 0, path, false);
+    function testBuybackV3_TokenInIsK613Reverts() public {
+        MockToken dummy = new MockToken();
+        MockV3Router02 router = new MockV3Router02(address(k613), address(dummy));
+        treasury.setRouterWhitelist(address(router), true);
+        vm.expectRevert(Treasury.InsufficientOutput.selector);
+        treasury.buybackV3ExactInputSingle(address(k613), address(router), 1, 1, POOL_FEE, false);
     }
 
     /// @notice testSetRouterWhitelist_OnlyAdmin: setRouterWhitelist from non-admin reverts.
@@ -234,33 +208,32 @@ contract TreasuryTest is Test {
         treasury.setRouterWhitelist(address(0), true);
     }
 
-    /// @notice testSetRouterWhitelist_SuccessAndBuyback: setRouterWhitelist enables buyback; removing router disables and buyback reverts.
-    function testSetRouterWhitelist_SuccessAndBuyback() public {
-        MockRouter router = new MockRouter(address(k613));
+    function testSetRouterWhitelist_SuccessAndBuybackV3() public {
+        MockToken other = new MockToken();
+        other.mint(address(treasury), 100 * ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(other));
+        k613.mint(address(router), 100 * ONE);
         assertFalse(treasury.routerWhitelist(address(router)));
         vm.expectEmit(true, true, false, true);
         emit Treasury.RouterWhitelistUpdated(address(router), true);
         treasury.setRouterWhitelist(address(router), true);
         assertTrue(treasury.routerWhitelist(address(router)));
-        k613.mint(address(router), 100 * ONE);
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
-        treasury.buyback(address(k613), address(router), 1, 1e18, path, false);
+        treasury.buybackV3ExactInputSingle(address(other), address(router), 1, 1e18, POOL_FEE, false);
 
         treasury.setRouterWhitelist(address(router), false);
         assertFalse(treasury.routerWhitelist(address(router)));
         vm.expectRevert(Treasury.RouterNotWhitelisted.selector);
-        treasury.buyback(address(k613), address(router), 1, 0, path, false);
+        treasury.buybackV3ExactInputSingle(address(other), address(router), 1, 0, POOL_FEE, false);
     }
 
     /// @notice testGetWhitelistedRouters: getWhitelistedRouters returns added routers and length decreases when one is removed.
     function testGetWhitelistedRouters() public {
+        MockToken t = new MockToken();
+        MockV3Router02 r1 = new MockV3Router02(address(k613), address(t));
+        MockV3Router02 r2 = new MockV3Router02(address(k613), address(t));
         address[] memory empty = treasury.getWhitelistedRouters();
         assertEq(empty.length, 0);
 
-        MockRouter r1 = new MockRouter(address(k613));
-        MockRouter r2 = new MockRouter(address(k613));
         treasury.setRouterWhitelist(address(r1), true);
         address[] memory one = treasury.getWhitelistedRouters();
         assertEq(one.length, 1);
@@ -278,29 +251,25 @@ contract TreasuryTest is Test {
         assertEq(afterRemove[0], address(r2));
     }
 
-    /// @notice testBuyback_InsufficientOutputReverts: buyback when router returns less than minK613Out reverts with InsufficientOutput.
-    function testBuyback_InsufficientOutputReverts() public {
-        MockRouter router = new MockRouter(address(k613));
+    function testBuybackV3_InsufficientOutputReverts() public {
+        MockToken other = new MockToken();
+        other.mint(address(treasury), 500 * ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(other));
+        router.setOutAmount(1);
+        k613.mint(address(router), 50 * ONE);
         treasury.setRouterWhitelist(address(router), true);
-        router.setShouldReturnInsufficient(true);
-        k613.mint(address(router), 100 * ONE);
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
         vm.expectRevert(Treasury.InsufficientOutput.selector);
-        treasury.buyback(address(k613), address(router), 1, 1e18, path, false);
+        treasury.buybackV3ExactInputSingle(address(other), address(router), 100 * ONE, 1e18, POOL_FEE, false);
     }
 
-    /// @notice testBuyback_DistributeRewardsFalse: buyback with distributeRewards false does not send xK613 to RD.
-    function testBuyback_DistributeRewardsFalse() public {
-        MockRouter router = new MockRouter(address(k613));
-        treasury.setRouterWhitelist(address(router), true);
+    function testBuybackV3_DistributeRewardsFalse() public {
+        MockToken other = new MockToken();
+        other.mint(address(treasury), 100 * ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(other));
         k613.mint(address(router), 100 * ONE);
+        treasury.setRouterWhitelist(address(router), true);
         uint256 rdBalBefore = xk613.balanceOf(address(distributor));
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
-        treasury.buyback(address(k613), address(router), 1, 1e18, path, false);
+        treasury.buybackV3ExactInputSingle(address(other), address(router), 1, 1e18, POOL_FEE, false);
         assertEq(xk613.balanceOf(address(distributor)), rdBalBefore);
     }
 
@@ -313,21 +282,18 @@ contract TreasuryTest is Test {
         treasury.depositRewards(100 * ONE);
     }
 
-    /// @notice testBuyback_PauseReverts: When paused, buyback reverts.
-    function testBuyback_PauseReverts() public {
-        MockRouter router = new MockRouter(address(k613));
+    function testBuybackV3_PauseReverts() public {
+        MockToken other = new MockToken();
+        other.mint(address(treasury), ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(other));
+        k613.mint(address(router), ONE);
         treasury.setRouterWhitelist(address(router), true);
-        k613.mint(address(router), 100 * ONE);
         treasury.pause();
         vm.expectRevert();
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
-        treasury.buyback(address(k613), address(router), 1, 1e18, path, false);
+        treasury.buybackV3ExactInputSingle(address(other), address(router), 1, 1e18, POOL_FEE, false);
     }
 
-    /// @notice testBuyback_DistributeRewardsTrue: buyback with distributeRewards true stakes K613 and notifies RD; user has pending rewards.
-    function testBuyback_DistributeRewardsTrue() public {
+    function testBuybackV3_DistributeRewardsTrue() public {
         xk613.mint(alice, 1_000 * ONE);
         xk613.setTransferWhitelist(alice, true);
         vm.prank(alice);
@@ -335,20 +301,18 @@ contract TreasuryTest is Test {
         vm.prank(alice);
         distributor.deposit(1_000 * ONE);
 
-        MockRouter router = new MockRouter(address(k613));
-        treasury.setRouterWhitelist(address(router), true);
+        MockToken other = new MockToken();
+        other.mint(address(treasury), ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(other));
         k613.mint(address(router), 100 * ONE);
+        treasury.setRouterWhitelist(address(router), true);
         uint256 rdBalBefore = xk613.balanceOf(address(distributor));
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
-        treasury.buyback(address(k613), address(router), 1, 1e18, path, true);
+        treasury.buybackV3ExactInputSingle(address(other), address(router), 1, 1e18, POOL_FEE, true);
         assertEq(xk613.balanceOf(address(distributor)), rdBalBefore + 1e18);
         assertGt(distributor.pendingRewardsOf(alice), 0);
     }
 
-    /// @notice testBuyback_DistributeRewardsTrue_TreasuryK613Zero: when Treasury has no K613 before buyback and distributeRewards true, K613 balance is 0 after.
-    function testBuyback_DistributeRewardsTrue_TreasuryK613Zero() public {
+    function testBuybackV3_DistributeRewardsTrue_TreasuryK613Zero() public {
         Treasury freshTreasury = new Treasury(address(k613), address(xk613), address(staking), address(distributor));
         freshTreasury.grantRole(freshTreasury.DEFAULT_ADMIN_ROLE(), address(this));
         freshTreasury.grantRole(freshTreasury.PAUSER_ROLE(), address(this));
@@ -361,57 +325,48 @@ contract TreasuryTest is Test {
         vm.prank(alice);
         distributor.deposit(1_000 * ONE);
 
-        MockRouter router = new MockRouter(address(k613));
+        MockToken other = new MockToken();
+        other.mint(address(freshTreasury), ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(other));
+        k613.mint(address(router), 100 * ONE);
         freshTreasury.setRouterWhitelist(address(router), true);
-        k613.mint(address(router), 100 * ONE);
         assertEq(k613.balanceOf(address(freshTreasury)), 0);
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
-        freshTreasury.buyback(address(k613), address(router), 1, 1e18, path, true);
+        freshTreasury.buybackV3ExactInputSingle(address(other), address(router), 1, 1e18, POOL_FEE, true);
         assertEq(k613.balanceOf(address(freshTreasury)), 0);
     }
 
-    /// @notice testBuyback_ApproveResetAfterCall: after buyback, tokenIn allowance from Treasury to router is 0.
-    function testBuyback_ApproveResetAfterCall() public {
-        MockRouter router = new MockRouter(address(k613));
+    function testBuybackV3_ApproveResetAfterCall() public {
+        MockToken other = new MockToken();
+        other.mint(address(treasury), ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(other));
+        k613.mint(address(router), ONE);
         treasury.setRouterWhitelist(address(router), true);
-        k613.mint(address(router), 100 * ONE);
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
-        treasury.buyback(address(k613), address(router), 1, 1e18, path, false);
-        assertEq(k613.allowance(address(treasury), address(router)), 0);
+        treasury.buybackV3ExactInputSingle(address(other), address(router), 1, 1e18, POOL_FEE, false);
+        assertEq(other.allowance(address(treasury), address(router)), 0);
     }
 
-    /// @notice testBuyback_WithOtherToken_MockRouter: buyback with a token other than K613; mock router pulls tokenIn and sends K613.
-    function testBuyback_WithOtherToken_MockRouter() public {
+    function testBuybackV3_MockRouter_Success() public {
         MockToken otherToken = new MockToken();
         otherToken.mint(address(treasury), 1000 * ONE);
-        MockRouterOtherToken router = new MockRouterOtherToken(address(k613), address(otherToken));
+        MockV3Router02 router = new MockV3Router02(address(k613), address(otherToken));
         k613.mint(address(router), 100 * ONE);
         treasury.setRouterWhitelist(address(router), true);
         uint256 amountIn = 50 * ONE;
         uint256 k613Before = k613.balanceOf(address(treasury));
-        address[] memory path = new address[](2);
-        path[0] = address(otherToken);
-        path[1] = address(k613);
-        treasury.buyback(address(otherToken), address(router), amountIn, 1e18, path, false);
+        treasury.buybackV3ExactInputSingle(address(otherToken), address(router), amountIn, 1e18, POOL_FEE, false);
         assertEq(k613.balanceOf(address(treasury)), k613Before + 1e18);
         assertEq(otherToken.allowance(address(treasury), address(router)), 0);
     }
 
-    /// @notice testBuyback_BuybackFailed: buyback when router call fails reverts with BuybackFailed.
-    function testBuyback_BuybackFailed() public {
-        MockRouter router = new MockRouter(address(k613));
-        treasury.setRouterWhitelist(address(router), true);
+    function testBuybackV3_BuybackFailed() public {
+        MockToken other = new MockToken();
+        other.mint(address(treasury), ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(other));
         router.setShouldFail(true);
-        k613.mint(address(router), 100 * ONE);
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
+        k613.mint(address(router), ONE);
+        treasury.setRouterWhitelist(address(router), true);
         vm.expectRevert(Treasury.BuybackFailed.selector);
-        treasury.buyback(address(k613), address(router), 1, 0, path, false);
+        treasury.buybackV3ExactInputSingle(address(other), address(router), 1, 0, POOL_FEE, false);
     }
 
     /// @notice test_Treasury_DepositRewards_ToRD_Claim: Treasury depositRewards stakes K613 and notifies RD; user with RD deposit can claim and receives expected xK613.
@@ -434,9 +389,7 @@ contract TreasuryTest is Test {
         assertEq(xk613.balanceOf(alice), before + 100 * ONE);
     }
 
-    /// @notice Conservation: buyback with distributeRewards=true does not leak K613; total system K613 changes only by router output.
-    function test_Buyback_DistributeRewards_ConservationOfK613() public {
-        // prepare one depositor in RD
+    function test_BuybackV3_DistributeRewards_ConservationOfK613() public {
         xk613.mint(alice, 1_000 * ONE);
         xk613.setTransferWhitelist(alice, true);
         vm.prank(alice);
@@ -444,24 +397,28 @@ contract TreasuryTest is Test {
         vm.prank(alice);
         distributor.deposit(1_000 * ONE);
 
-        // router will send 1e18 K613 to Treasury on swap
-        MockRouter router = new MockRouter(address(k613));
+        MockToken other = new MockToken();
+        other.mint(address(treasury), ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(other));
         treasury.setRouterWhitelist(address(router), true);
         k613.mint(address(router), 100 * ONE);
 
-        // snapshot total K613 in system (Treasury + Staking + RD + alice)
         uint256 totalBefore = k613.balanceOf(address(treasury)) + k613.balanceOf(address(staking))
             + k613.balanceOf(address(distributor)) + k613.balanceOf(alice);
 
-        address[] memory path = new address[](2);
-        path[0] = address(k613);
-        path[1] = address(k613);
-        treasury.buyback(address(k613), address(router), 1 * ONE, 1e18, path, true);
+        treasury.buybackV3ExactInputSingle(address(other), address(router), ONE, 1e18, POOL_FEE, true);
 
         uint256 totalAfter = k613.balanceOf(address(treasury)) + k613.balanceOf(address(staking))
             + k613.balanceOf(address(distributor)) + k613.balanceOf(alice);
 
-        // Router minted exactly 1e18 K613 into the system during swap
         assertEq(totalAfter - totalBefore, 1e18);
+    }
+
+    function testBuybackV3_RouterNotWhitelistedReverts() public {
+        MockToken otherToken = new MockToken();
+        otherToken.mint(address(treasury), 100 * ONE);
+        MockV3Router02 router = new MockV3Router02(address(k613), address(otherToken));
+        vm.expectRevert(Treasury.RouterNotWhitelisted.selector);
+        treasury.buybackV3ExactInputSingle(address(otherToken), address(router), 10 * ONE, 1, POOL_FEE, false);
     }
 }

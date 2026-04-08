@@ -3,11 +3,11 @@ pragma solidity 0.8.34;
 
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {K613} from "../src/token/K613.sol";
-import {xK613} from "../src/token/xK613.sol";
-import {Staking} from "../src/staking/Staking.sol";
-import {RewardsDistributor} from "../src/staking/RewardsDistributor.sol";
-import {Treasury} from "../src/treasury/Treasury.sol";
+import {K613} from "src/token/K613.sol";
+import {xK613} from "src/token/xK613.sol";
+import {Staking} from "src/staking/Staking.sol";
+import {RewardsDistributor} from "src/staking/RewardsDistributor.sol";
+import {Treasury} from "src/treasury/Treasury.sol";
 
 contract EconomicModelTesnet is Script {
     struct FlowParams {
