@@ -78,4 +78,90 @@ contract K613Test is Test {
         vm.expectRevert();
         token.transfer(bob, 1e18);
     }
+
+    /// @notice testConstructorZeroMinterReverts: constructor reverts with ZeroAddress when initial minter is zero.
+    function testConstructorZeroMinterReverts() public {
+        vm.expectRevert(K613.ZeroAddress.selector);
+        new K613(address(0));
+    }
+
+    /// @notice testPauseUnpauseOnlyPauser: pause/unpause are restricted to PAUSER_ROLE.
+    function testPauseUnpauseOnlyPauser() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        token.pause();
+
+        token.pause();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        token.unpause();
+    }
+
+    /// @notice testUnpauseRestoresTransfer: transfer works again after unpause.
+    function testUnpauseRestoresTransfer() public {
+        vm.prank(minter);
+        token.mint(alice, 2e18);
+        token.pause();
+
+        token.unpause();
+
+        vm.prank(alice);
+        token.transfer(bob, 1e18);
+        assertEq(token.balanceOf(alice), 1e18);
+        assertEq(token.balanceOf(bob), 1e18);
+    }
+
+    /// @notice testBurnFromRevertsOnInsufficientAllowance: burnFrom reverts when allowance is lower than amount.
+    function testBurnFromRevertsOnInsufficientAllowance() public {
+        vm.prank(minter);
+        token.mint(alice, 3e18);
+
+        vm.prank(alice);
+        token.approve(minter, 1e18);
+
+        vm.prank(minter);
+        vm.expectRevert(K613.BurnAmountExceedsAllowance.selector);
+        token.burnFrom(alice, 2e18);
+    }
+
+    /// @notice testBurnFromSpendsAllowance: successful burnFrom decreases allowance.
+    function testBurnFromSpendsAllowance() public {
+        vm.prank(minter);
+        token.mint(alice, 3e18);
+
+        vm.prank(alice);
+        token.approve(minter, 3e18);
+
+        vm.prank(minter);
+        token.burnFrom(alice, 1e18);
+
+        assertEq(token.allowance(alice, minter), 2e18);
+    }
+
+    /// @notice testSetMinterRevokesOldMinterAndGrantsNew: old minter loses rights, new minter gains rights.
+    function testSetMinterRevokesOldMinterAndGrantsNew() public {
+        token.setMinter(alice);
+
+        vm.prank(minter);
+        vm.expectRevert(K613.OnlyMinter.selector);
+        token.mint(bob, 1e18);
+
+        vm.prank(alice);
+        token.mint(bob, 2e18);
+        assertEq(token.balanceOf(bob), 2e18);
+    }
+
+    /// @notice testMintAndBurnBlockedWhenPaused: mint and burnFrom revert while token is paused.
+    function testMintAndBurnBlockedWhenPaused() public {
+        token.pause();
+
+        vm.prank(minter);
+        vm.expectRevert();
+        token.mint(alice, 1e18);
+
+        vm.prank(minter);
+        vm.expectRevert();
+        token.burnFrom(alice, 1e18);
+    }
 }

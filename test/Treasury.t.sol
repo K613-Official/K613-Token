@@ -125,17 +125,20 @@ contract TreasuryTest is Test {
         treasury.withdraw(address(k613), alice, 100 * ONE);
     }
 
+    /// @notice testApproveXk613PullRewards_OnlyAdmin: only admin can set xK613 pull allowance.
     function testApproveXk613PullRewards_OnlyAdmin() public {
         vm.prank(alice);
         vm.expectRevert();
         treasury.approveXk613PullRewards(address(0xBEEF), type(uint256).max);
     }
 
+    /// @notice testApproveXk613PullRewards_ZeroSpenderReverts: zero spender reverts with ZeroAddress.
     function testApproveXk613PullRewards_ZeroSpenderReverts() public {
         vm.expectRevert(Treasury.ZeroAddress.selector);
         treasury.approveXk613PullRewards(address(0), 1);
     }
 
+    /// @notice testApproveXk613PullRewards_SuccessAndRevoke: allowance can be set to max and then revoked to zero.
     function testApproveXk613PullRewards_SuccessAndRevoke() public {
         address spender = address(0xBEEF);
         xk613.mint(address(treasury), 10 * ONE);
@@ -170,23 +173,27 @@ contract TreasuryTest is Test {
         assertEq(k613.balanceOf(alice), bal);
     }
 
+    /// @notice testBuybackV3_ZeroTokenInReverts: buyback reverts when tokenIn is zero.
     function testBuybackV3_ZeroTokenInReverts() public {
         vm.expectRevert(Treasury.ZeroAddress.selector);
         treasury.buybackV3ExactInputSingle(address(0), address(0x1), 1, 0, POOL_FEE, false);
     }
 
+    /// @notice testBuybackV3_ZeroRouterReverts: buyback reverts when router is zero.
     function testBuybackV3_ZeroRouterReverts() public {
         MockToken other = new MockToken();
         vm.expectRevert(Treasury.ZeroAddress.selector);
         treasury.buybackV3ExactInputSingle(address(other), address(0), 1, 0, POOL_FEE, false);
     }
 
+    /// @notice testBuybackV3_ZeroAmountReverts: buyback reverts when amountIn is zero.
     function testBuybackV3_ZeroAmountReverts() public {
         MockToken other = new MockToken();
         vm.expectRevert(Treasury.ZeroAmount.selector);
         treasury.buybackV3ExactInputSingle(address(other), address(0x1), 0, 0, POOL_FEE, false);
     }
 
+    /// @notice testBuybackV3_TokenInIsK613Reverts: buyback rejects k613 as tokenIn.
     function testBuybackV3_TokenInIsK613Reverts() public {
         MockToken dummy = new MockToken();
         MockV3Router02 router = new MockV3Router02(address(k613), address(dummy));
@@ -208,6 +215,7 @@ contract TreasuryTest is Test {
         treasury.setRouterWhitelist(address(0), true);
     }
 
+    /// @notice testSetRouterWhitelist_SuccessAndBuybackV3: whitelisted router can execute buyback, removed router cannot.
     function testSetRouterWhitelist_SuccessAndBuybackV3() public {
         MockToken other = new MockToken();
         other.mint(address(treasury), 100 * ONE);
@@ -251,6 +259,7 @@ contract TreasuryTest is Test {
         assertEq(afterRemove[0], address(r2));
     }
 
+    /// @notice testBuybackV3_InsufficientOutputReverts: buyback reverts when realized output is below minK613Out.
     function testBuybackV3_InsufficientOutputReverts() public {
         MockToken other = new MockToken();
         other.mint(address(treasury), 500 * ONE);
@@ -262,6 +271,7 @@ contract TreasuryTest is Test {
         treasury.buybackV3ExactInputSingle(address(other), address(router), 100 * ONE, 1e18, POOL_FEE, false);
     }
 
+    /// @notice testBuybackV3_DistributeRewardsFalse: with distributeRewards=false RD balance does not increase.
     function testBuybackV3_DistributeRewardsFalse() public {
         MockToken other = new MockToken();
         other.mint(address(treasury), 100 * ONE);
@@ -282,6 +292,7 @@ contract TreasuryTest is Test {
         treasury.depositRewards(100 * ONE);
     }
 
+    /// @notice testBuybackV3_PauseReverts: paused treasury blocks buyback.
     function testBuybackV3_PauseReverts() public {
         MockToken other = new MockToken();
         other.mint(address(treasury), ONE);
@@ -293,6 +304,7 @@ contract TreasuryTest is Test {
         treasury.buybackV3ExactInputSingle(address(other), address(router), 1, 1e18, POOL_FEE, false);
     }
 
+    /// @notice testBuybackV3_DistributeRewardsTrue: with distributeRewards=true buyback notifies rewards.
     function testBuybackV3_DistributeRewardsTrue() public {
         xk613.mint(alice, 1_000 * ONE);
         xk613.setTransferWhitelist(alice, true);
@@ -312,6 +324,7 @@ contract TreasuryTest is Test {
         assertGt(distributor.pendingRewardsOf(alice), 0);
     }
 
+    /// @notice testBuybackV3_DistributeRewardsTrue_TreasuryK613Zero: distribute flow works from fresh treasury with zero starting k613.
     function testBuybackV3_DistributeRewardsTrue_TreasuryK613Zero() public {
         Treasury freshTreasury = new Treasury(address(k613), address(xk613), address(staking), address(distributor));
         freshTreasury.grantRole(freshTreasury.DEFAULT_ADMIN_ROLE(), address(this));
@@ -335,6 +348,7 @@ contract TreasuryTest is Test {
         assertEq(k613.balanceOf(address(freshTreasury)), 0);
     }
 
+    /// @notice testBuybackV3_ApproveResetAfterCall: tokenIn approval to router is reset to zero after swap.
     function testBuybackV3_ApproveResetAfterCall() public {
         MockToken other = new MockToken();
         other.mint(address(treasury), ONE);
@@ -345,6 +359,7 @@ contract TreasuryTest is Test {
         assertEq(other.allowance(address(treasury), address(router)), 0);
     }
 
+    /// @notice testBuybackV3_MockRouter_Success: mock router buyback increases treasury k613 balance.
     function testBuybackV3_MockRouter_Success() public {
         MockToken otherToken = new MockToken();
         otherToken.mint(address(treasury), 1000 * ONE);
@@ -358,6 +373,7 @@ contract TreasuryTest is Test {
         assertEq(otherToken.allowance(address(treasury), address(router)), 0);
     }
 
+    /// @notice testBuybackV3_BuybackFailed: router failure is mapped to BuybackFailed.
     function testBuybackV3_BuybackFailed() public {
         MockToken other = new MockToken();
         other.mint(address(treasury), ONE);
@@ -389,6 +405,7 @@ contract TreasuryTest is Test {
         assertEq(xk613.balanceOf(alice), before + 100 * ONE);
     }
 
+    /// @notice test_BuybackV3_DistributeRewards_ConservationOfK613: distributed flow preserves global k613 accounting.
     function test_BuybackV3_DistributeRewards_ConservationOfK613() public {
         xk613.mint(alice, 1_000 * ONE);
         xk613.setTransferWhitelist(alice, true);
@@ -414,11 +431,57 @@ contract TreasuryTest is Test {
         assertEq(totalAfter - totalBefore, 1e18);
     }
 
+    /// @notice testBuybackV3_RouterNotWhitelistedReverts: buyback reverts for non-whitelisted router.
     function testBuybackV3_RouterNotWhitelistedReverts() public {
         MockToken otherToken = new MockToken();
         otherToken.mint(address(treasury), 100 * ONE);
         MockV3Router02 router = new MockV3Router02(address(k613), address(otherToken));
         vm.expectRevert(Treasury.RouterNotWhitelisted.selector);
         treasury.buybackV3ExactInputSingle(address(otherToken), address(router), 10 * ONE, 1, POOL_FEE, false);
+    }
+
+    /// @notice testConstructorZeroAddressReverts: constructor rejects zero addresses for dependencies.
+    function testConstructorZeroAddressReverts() public {
+        vm.expectRevert(Treasury.ZeroAddress.selector);
+        new Treasury(address(0), address(xk613), address(staking), address(distributor));
+
+        vm.expectRevert(Treasury.ZeroAddress.selector);
+        new Treasury(address(k613), address(0), address(staking), address(distributor));
+
+        vm.expectRevert(Treasury.ZeroAddress.selector);
+        new Treasury(address(k613), address(xk613), address(0), address(distributor));
+
+        vm.expectRevert(Treasury.ZeroAddress.selector);
+        new Treasury(address(k613), address(xk613), address(staking), address(0));
+    }
+
+    /// @notice testPauseUnpauseOnlyPauser: pause and unpause are restricted to PAUSER_ROLE.
+    function testPauseUnpauseOnlyPauser() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        treasury.pause();
+
+        treasury.pause();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        treasury.unpause();
+    }
+
+    /// @notice testSetRouterWhitelistIdempotent: repeated add/remove does not duplicate entries or fail.
+    function testSetRouterWhitelistIdempotent() public {
+        MockToken t = new MockToken();
+        MockV3Router02 r = new MockV3Router02(address(k613), address(t));
+
+        treasury.setRouterWhitelist(address(r), true);
+        treasury.setRouterWhitelist(address(r), true);
+        address[] memory listAfterDoubleAdd = treasury.getWhitelistedRouters();
+        assertEq(listAfterDoubleAdd.length, 1);
+        assertEq(listAfterDoubleAdd[0], address(r));
+
+        treasury.setRouterWhitelist(address(r), false);
+        treasury.setRouterWhitelist(address(r), false);
+        address[] memory listAfterDoubleRemove = treasury.getWhitelistedRouters();
+        assertEq(listAfterDoubleRemove.length, 0);
     }
 }

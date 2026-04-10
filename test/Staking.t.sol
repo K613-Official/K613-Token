@@ -717,4 +717,49 @@ contract StakingTest is Test {
 
         assertEq(staking.totalBacking(), 100 * ONE);
     }
+
+    /// @notice testConstructorZeroAddressReverts: constructor rejects zero k613 or xk613 addresses.
+    function testConstructorZeroAddressReverts() public {
+        vm.expectRevert(Staking.ZeroAddress.selector);
+        new Staking(address(0), address(xk613), LOCK_DURATION, PENALTY_BPS);
+
+        vm.expectRevert(Staking.ZeroAddress.selector);
+        new Staking(address(k613), address(0), LOCK_DURATION, PENALTY_BPS);
+    }
+
+    /// @notice testPauseUnpauseOnlyPauser: only pauser can pause and unpause staking.
+    function testPauseUnpauseOnlyPauser() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        staking.pause();
+
+        staking.pause();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        staking.unpause();
+    }
+
+    /// @notice testInitiateExitZeroAmountReverts: initiateExit(0) reverts with ZeroAmount.
+    function testInitiateExitZeroAmountReverts() public {
+        vm.prank(alice);
+        vm.expectRevert(Staking.ZeroAmount.selector);
+        staking.initiateExit(0);
+    }
+
+    /// @notice testCancelExitInvalidIndexRevertsWhenQueueNotEmpty: cancelExit reverts for out-of-range index when queue exists.
+    function testCancelExitInvalidIndexRevertsWhenQueueNotEmpty() public {
+        vm.prank(alice);
+        k613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.stake(100 * ONE);
+        vm.prank(alice);
+        xk613.approve(address(staking), 100 * ONE);
+        vm.prank(alice);
+        staking.initiateExit(100 * ONE);
+
+        vm.prank(alice);
+        vm.expectRevert(Staking.InvalidExitIndex.selector);
+        staking.cancelExit(1);
+    }
 }

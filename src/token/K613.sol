@@ -13,6 +13,8 @@ contract K613 is ERC20, AccessControl, Pausable {
     error ZeroAddress();
     /// @notice Thrown when a non-minter attempts to mint or burn tokens.
     error OnlyMinter();
+    /// @notice Thrown when the burn amount exceeds the allowance.
+    error BurnAmountExceedsAllowance();
 
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
@@ -69,7 +71,9 @@ contract K613 is ERC20, AccessControl, Pausable {
             revert OnlyMinter();
         }
         uint256 currentAllowance = allowance(from, msg.sender);
-        require(currentAllowance >= amount, "ERC20: burn amount exceeds allowance");
+        if (currentAllowance < amount) {
+            revert BurnAmountExceedsAllowance();
+        }
         _spendAllowance(from, msg.sender, amount);
         _burn(from, amount);
     }

@@ -943,4 +943,43 @@ contract RewardsDistributorTest is Test {
         uint256 totalPending = distributor.pendingRewardsOf(alice) + distributor.pendingRewardsOf(bob);
         assertLe(totalClaimed + totalPending, totalNotified + 1e18, "claim + pending <= notified + tol");
     }
+
+    /// @notice testSetStakingOnlyAdmin: only admin can update staking address.
+    function testSetStakingOnlyAdmin() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        distributor.setStaking(address(0x1234));
+    }
+
+    /// @notice testAddPendingPenaltyZeroIsNoop: adding zero penalty leaves state unchanged.
+    function testAddPendingPenaltyZeroIsNoop() public {
+        uint256 beforePenalty = distributor.pendingPenalties();
+        distributor.addPendingPenalty(0);
+        assertEq(distributor.pendingPenalties(), beforePenalty);
+    }
+
+    /// @notice testPauseUnpauseOnlyPauser: pause and unpause are restricted to PAUSER_ROLE.
+    function testPauseUnpauseOnlyPauser() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        distributor.pause();
+
+        distributor.pause();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        distributor.unpause();
+    }
+
+    /// @notice testClaimWithoutStakingAddressWorks: claim succeeds when staking address is unset and rewards exist.
+    function testClaimWithoutStakingAddressWorks() public {
+        distributor.setStaking(address(0));
+        token.transfer(address(distributor), 10 * ONE);
+        distributor.notifyReward(10 * ONE);
+
+        uint256 before = token.balanceOf(alice);
+        vm.prank(alice);
+        distributor.claim();
+        assertGt(token.balanceOf(alice), before);
+    }
 }
