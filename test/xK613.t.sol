@@ -77,4 +77,125 @@ contract xK613Test is Test {
         vm.expectRevert();
         token.setTransferWhitelist(alice, true);
     }
+
+    /// @notice test_SetMinter_SuccessAndZeroRevert: admin can set minter, zero address reverts.
+    function test_SetMinter_SuccessAndZeroRevert() public {
+        vm.expectRevert(xK613.ZeroAddress.selector);
+        token.setMinter(address(0));
+
+        token.setMinter(alice);
+        assertEq(token.minter(), alice);
+    }
+
+    /// @notice test_SetMinter_RevokesOldAndGrantsNew: old minter cannot mint after rotation, new minter can.
+    function test_SetMinter_RevokesOldAndGrantsNew() public {
+        token.setMinter(alice);
+
+        vm.prank(minter);
+        vm.expectRevert(xK613.OnlyMinter.selector);
+        token.mint(bob, 1e18);
+
+        vm.prank(alice);
+        token.mint(bob, 1e18);
+        assertEq(token.balanceOf(bob), 1e18);
+    }
+
+    /// @notice test_SetTransferWhitelist_ZeroAddressReverts: zero address cannot be whitelisted.
+    function test_SetTransferWhitelist_ZeroAddressReverts() public {
+        vm.expectRevert(xK613.ZeroAddress.selector);
+        token.setTransferWhitelist(address(0), true);
+    }
+
+    /// @notice test_Transfer_OnlySenderWhitelistedSucceeds: transfer succeeds when sender is whitelisted.
+    function test_Transfer_OnlySenderWhitelistedSucceeds() public {
+        vm.prank(minter);
+        token.mint(alice, 1e18);
+        token.setTransferWhitelist(alice, true);
+
+        vm.prank(alice);
+        token.transfer(bob, 1e18);
+        assertEq(token.balanceOf(bob), 1e18);
+    }
+
+    /// @notice test_Transfer_OnlyRecipientWhitelistedSucceeds: transfer succeeds when recipient is whitelisted.
+    function test_Transfer_OnlyRecipientWhitelistedSucceeds() public {
+        vm.prank(minter);
+        token.mint(alice, 1e18);
+        token.setTransferWhitelist(bob, true);
+
+        vm.prank(alice);
+        token.transfer(bob, 1e18);
+        assertEq(token.balanceOf(bob), 1e18);
+    }
+
+    /// @notice test_Transfer_WhitelistDisabledAgainReverts: transfer reverts after whitelist flag is removed.
+    function test_Transfer_WhitelistDisabledAgainReverts() public {
+        vm.prank(minter);
+        token.mint(alice, 1e18);
+        token.setTransferWhitelist(alice, true);
+        token.setTransferWhitelist(alice, false);
+
+        vm.prank(alice);
+        vm.expectRevert(xK613.TransfersDisabled.selector);
+        token.transfer(bob, 1e18);
+    }
+
+    /// @notice test_BurnFrom_ByMinter_Succeeds: minter can burn and supply decreases.
+    function test_BurnFrom_ByMinter_Succeeds() public {
+        vm.prank(minter);
+        token.mint(alice, 2e18);
+
+        vm.prank(minter);
+        token.burnFrom(alice, 1e18);
+
+        assertEq(token.balanceOf(alice), 1e18);
+        assertEq(token.totalSupply(), 1e18);
+    }
+
+    /// @notice test_BurnFrom_RevertsOnInsufficientBalance: burnFrom reverts when burn amount exceeds holder balance.
+    function test_BurnFrom_RevertsOnInsufficientBalance() public {
+        vm.prank(minter);
+        token.mint(alice, 1e18);
+
+        vm.prank(minter);
+        vm.expectRevert();
+        token.burnFrom(alice, 2e18);
+    }
+
+    /// @notice test_Pause_Unpause_AccessAndRecovery: only pauser can toggle pause and transfer recovers after unpause.
+    function test_Pause_Unpause_AccessAndRecovery() public {
+        vm.prank(minter);
+        token.mint(alice, 1e18);
+        token.setTransferWhitelist(alice, true);
+        token.setTransferWhitelist(bob, true);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        token.pause();
+
+        token.pause();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        token.unpause();
+
+        token.unpause();
+
+        vm.prank(alice);
+        token.transfer(bob, 1e18);
+        assertEq(token.balanceOf(bob), 1e18);
+    }
+
+    /// @notice test_MintAndBurn_BlockedWhenPaused: mint and burnFrom revert when contract is paused.
+    function test_MintAndBurn_BlockedWhenPaused() public {
+        token.pause();
+
+        vm.prank(minter);
+        vm.expectRevert();
+        token.mint(alice, 1e18);
+
+        vm.prank(minter);
+        vm.expectRevert();
+        token.burnFrom(alice, 1e18);
+    }
 }

@@ -142,6 +142,7 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
         }
 
         uint256 k613Before = k613.balanceOf(address(this));
+        uint256 routerReportedOut = 0;
         IERC20(tokenIn).forceApprove(router, amountIn);
         try IV3SwapRouter(router)
             .exactInputSingle(
@@ -155,12 +156,16 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
                     sqrtPriceLimitX96: 0
                 })
             ) returns (
-            uint256
-        ) {}
-        catch {
+            uint256 amountOut
+        ) {
+            routerReportedOut = amountOut;
+        } catch {
             revert BuybackFailed();
         }
         IERC20(tokenIn).forceApprove(router, 0);
+        if (routerReportedOut < minK613Out) {
+            revert InsufficientOutput();
+        }
         k613Out = k613.balanceOf(address(this)) - k613Before;
         if (k613Out < minK613Out) {
             revert InsufficientOutput();

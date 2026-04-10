@@ -22,6 +22,7 @@ contract VestingManagerTest is Test {
         token.approve(address(manager), type(uint256).max);
     }
 
+    /// @notice testCreateVestingWalletAndReleaseAfterCliff: creates wallet, tracks record, and releases after cliff.
     function testCreateVestingWalletAndReleaseAfterCliff() public {
         uint64 start = uint64(block.timestamp + 7 days);
         uint64 duration = 180 days;
@@ -63,6 +64,7 @@ contract VestingManagerTest is Test {
         assertEq(token.balanceOf(beneficiary), releasable);
     }
 
+    /// @notice testFundExistingVestingWallet: extra funding updates wallet balance and totalFunded.
     function testFundExistingVestingWallet() public {
         uint64 start = uint64(block.timestamp + 1 days);
         uint64 duration = 90 days;
@@ -78,6 +80,7 @@ contract VestingManagerTest is Test {
         assertEq(record.totalFunded, initialAmount + extraAmount);
     }
 
+    /// @notice testMultipleVestingsForSameBeneficiary: beneficiary wallet list and pagination reflect creation order.
     function testMultipleVestingsForSameBeneficiary() public {
         uint64 start = uint64(block.timestamp + 1 days);
         uint64 duration = 60 days;
@@ -106,8 +109,77 @@ contract VestingManagerTest is Test {
         assertEq(sliceB[0], w2);
     }
 
+    /// @notice testFundUnknownWalletReverts: funding unmanaged wallet reverts with WalletNotManaged.
     function testFundUnknownWalletReverts() public {
         vm.expectRevert(K613VestingManager.WalletNotManaged.selector);
         manager.fundVestingWallet(address(0x1234), ONE);
+    }
+
+    /// @notice testConstructorZeroAddressReverts: constructor rejects zero owner or zero token.
+    function testConstructorZeroAddressReverts() public {
+        vm.expectRevert(abi.encodeWithSignature("OwnableInvalidOwner(address)", address(0)));
+        new K613VestingManager(address(0), address(token));
+
+        vm.expectRevert(K613VestingManager.ZeroAddress.selector);
+        new K613VestingManager(admin, address(0));
+    }
+
+    /// @notice testCreateVestingWalletOnlyOwnerAndInputValidation: only owner can create; zero beneficiary and zero amount revert.
+    function testCreateVestingWalletOnlyOwnerAndInputValidation() public {
+        vm.prank(beneficiary);
+        vm.expectRevert();
+        manager.createVestingWallet(beneficiary, uint64(block.timestamp), 1 days, 1 days, ONE);
+
+        vm.expectRevert(K613VestingManager.ZeroAddress.selector);
+        manager.createVestingWallet(address(0), uint64(block.timestamp), 1 days, 1 days, ONE);
+
+        vm.expectRevert(K613VestingManager.ZeroAmount.selector);
+        manager.createVestingWallet(beneficiary, uint64(block.timestamp), 1 days, 1 days, 0);
+    }
+
+    /// @notice testFundVestingWalletOnlyOwnerAndInputValidation: only owner can fund; zero wallet and zero amount revert.
+    function testFundVestingWalletOnlyOwnerAndInputValidation() public {
+        address walletAddress =
+            manager.createVestingWallet(beneficiary, uint64(block.timestamp), 30 days, 5 days, 10 * ONE);
+
+        vm.prank(beneficiary);
+        vm.expectRevert();
+        manager.fundVestingWallet(walletAddress, ONE);
+
+        vm.expectRevert(K613VestingManager.ZeroAddress.selector);
+        manager.fundVestingWallet(address(0), ONE);
+
+        vm.expectRevert(K613VestingManager.ZeroAmount.selector);
+        manager.fundVestingWallet(walletAddress, 0);
+    }
+
+    /// @notice testGetWalletsSliceEdgeCases: slice handles zero limit, out-of-range offset, and oversize limit.
+    function testGetWalletsSliceEdgeCases() public {
+        address w1 = manager.createVestingWallet(beneficiary, uint64(block.timestamp), 30 days, 5 days, 10 * ONE);
+        address w2 = manager.createVestingWallet(beneficiary, uint64(block.timestamp + 1), 30 days, 5 days, 20 * ONE);
+
+        address[] memory emptyByLimit = manager.getWalletsSlice(0, 0);
+        assertEq(emptyByLimit.length, 0);
+
+        address[] memory emptyByOffset = manager.getWalletsSlice(2, 1);
+        assertEq(emptyByOffset.length, 0);
+
+        address[] memory full = manager.getWalletsSlice(0, 10);
+        assertEq(full.length, 2);
+        assertEq(full[0], w1);
+        assertEq(full[1], w2);
+    }
+
+    /// @notice testUnknownRecordIsZeroed: unknown wallet returns zeroed vesting record.
+    function testUnknownRecordIsZeroed() public view {
+        K613VestingManager.VestingRecord memory record = manager.getVestingRecord(address(0x9999));
+        assertEq(record.beneficiary, address(0));
+        assertEq(record.vestingWallet, address(0));
+        assertEq(record.startTimestamp, 0);
+        assertEq(record.durationSeconds, 0);
+        assertEq(record.cliffSeconds, 0);
+        assertEq(record.initialAmount, 0);
+        assertEq(record.totalFunded, 0);
+        assertEq(record.createdAt, 0);
     }
 }
