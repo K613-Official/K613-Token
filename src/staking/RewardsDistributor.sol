@@ -145,6 +145,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Claims accumulated rewards. Reverts while caller has an active exit vesting in Staking (withdraw from RD first, then exit; no claim during vesting).
     function claim() external nonReentrant whenNotPaused {
+        // aderyn-ignore-next-line(reentrancy-state-change)
         if (address(staking) != address(0) && IStaking(staking).exitQueueLength(msg.sender) > 0) {
             revert ExitVestingActive();
         }
