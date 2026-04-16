@@ -92,6 +92,14 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     error ExitQueueFull();
     /// @notice Thrown when the requested exit amount exceeds the user’s staked balance.
     error AmountExceedsStake();
+    /// @notice Thrown when lockDuration is zero.
+    error InvalidLockDuration();
+    /// @notice Thrown when there is not enough system backing to redeem rewards.
+    error InsufficientSystemBacking();
+    /// @notice Thrown when attempting to add a system staker that is already registered.
+    error AlreadySystemStaker();
+    /// @notice Thrown when attempting to remove a system staker that is not registered.
+    error NotSystemStaker();
 
     /// @notice Exit request struct
     struct ExitRequest {
@@ -115,13 +123,17 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     /// @notice Lock duration for standard exits
     uint256 public immutable lockDuration;
     /// @notice Penalty, in basis points, applied on instant exits before `lockDuration`
-    uint256 public immutable instantExitPenaltyBps;
+    uint256 public instantExitPenaltyBps;
 
     /// @notice Rewards distributor responsible for external reward accounting
     RewardsDistributor public rewardsDistributor;
     mapping(address => UserState) private _userState;
     /// @notice Total K613 backing active positions (staked minus exited)
     uint256 private _totalBacking;
+    /// @notice System staker addresses (RD, Treasury) whose positions back reward xK613
+    address[] private _systemStakers;
+    /// @notice Whether an address is a registered system staker
+    mapping(address => bool) public isSystemStaker;
 
     /// @notice Emitted when a user stakes K613
     event Staked(address indexed account, uint256 amount);
@@ -135,6 +147,12 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     event InstantExit(address indexed account, uint256 index, uint256 amount, uint256 penalty);
     /// @notice Emitted when rewards distributor is updated
     event RewardsDistributorUpdated(address indexed distributor);
+    /// @notice Emitted when instantExitPenaltyBps is updated
+    event InstantExitPenaltyBpsUpdated(uint256 oldBps, uint256 newBps);
+    /// @notice Emitted when a user redeems reward xK613 for K613
+    event RewardsRedeemed(address indexed account, uint256 amount);
+    /// @notice Emitted when a system staker is added or removed
+    event SystemStakerUpdated(address indexed account, bool added);
 
     /// @notice Initializes the staking contract.
     /// @param k613Token Address of the K613 token to be staked.
@@ -143,7 +161,8 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     /// @param instantExitPenaltyBps_ Penalty in basis points for instant exits.
     constructor(address k613Token, address xk613Token, uint256 lockDuration_, uint256 instantExitPenaltyBps_) {
         if (k613Token == address(0) || xk613Token == address(0)) revert ZeroAddress();
-        if (instantExitPenaltyBps_ > MAX_BASIS_POINTS) revert InvalidBps();
+        if (lockDuration_ == 0) revert InvalidLockDuration();
+        if (instantExitPenaltyBps_ == 0 || instantExitPenaltyBps_ > MAX_BASIS_POINTS) revert InvalidBps();
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(PAUSER_ROLE, msg.sender);
         k613 = IERC20(k613Token);
@@ -200,7 +219,8 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     /// @return sum Total amount pending exit across the user's queue.
     function _exitPendingSum(address user) internal view returns (uint256 sum) {
         ExitRequest[] storage q = _userState[user].exitQueue;
-        for (uint256 i = 0; i < q.length; ++i) {
+        uint256 len = q.length;
+        for (uint256 i = 0; i < len; ++i) {
             sum += q[i].amount;
         }
     }
@@ -283,7 +303,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         if (block.timestamp >= req.exitInitiatedAt + lockDuration) revert Unlocked();
 
         uint256 amount = req.amount;
-        uint256 penalty = (amount * instantExitPenaltyBps) / MAX_BASIS_POINTS;
+        uint256 penalty = (amount * instantExitPenaltyBps + MAX_BASIS_POINTS - 1) / MAX_BASIS_POINTS;
         uint256 payout = amount - penalty;
 
         if (penalty > 0 && address(rewardsDistributor) == address(0)) revert RewardsDistributorNotSet();
@@ -313,6 +333,73 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
             s.exitQueue[index] = s.exitQueue[last];
         }
         s.exitQueue.pop();
+    }
+
+    /// @notice Updates the instant exit penalty. Only callable by DEFAULT_ADMIN_ROLE.
+    /// @param newBps New penalty in basis points. Must be > 0 and <= MAX_BASIS_POINTS.
+    function setInstantExitPenaltyBps(uint256 newBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newBps == 0 || newBps > MAX_BASIS_POINTS) revert InvalidBps();
+        emit InstantExitPenaltyBpsUpdated(instantExitPenaltyBps, newBps);
+        instantExitPenaltyBps = newBps;
+    }
+
+    /// @notice Registers a system staker whose position backs reward xK613 (e.g. RewardsDistributor, Treasury).
+    /// @param account Address to register.
+    function addSystemStaker(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (account == address(0)) revert ZeroAddress();
+        if (isSystemStaker[account]) revert AlreadySystemStaker();
+        isSystemStaker[account] = true;
+        _systemStakers.push(account);
+        emit SystemStakerUpdated(account, true);
+    }
+
+    /// @notice Removes a system staker.
+    /// @param account Address to remove.
+    function removeSystemStaker(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (!isSystemStaker[account]) revert NotSystemStaker();
+        isSystemStaker[account] = false;
+        uint256 len = _systemStakers.length;
+        for (uint256 i = 0; i < len; ++i) {
+            if (_systemStakers[i] == account) {
+                _systemStakers[i] = _systemStakers[len - 1];
+                _systemStakers.pop();
+                break;
+            }
+        }
+        emit SystemStakerUpdated(account, false);
+    }
+
+    /// @notice Returns all registered system staker addresses.
+    function getSystemStakers() external view returns (address[] memory) {
+        return _systemStakers;
+    }
+
+    /// @notice Redeems reward xK613 for underlying K613, deducting from system staker positions.
+    /// @dev Caller transfers xK613 to this contract, it is burned, and K613 is released from system backing.
+    /// @param amount Amount of xK613 to redeem for K613.
+    function redeemRewards(uint256 amount) external nonReentrant whenNotPaused {
+        if (amount == 0) revert ZeroAmount();
+
+        uint256 remaining = amount;
+        uint256 len = _systemStakers.length;
+        for (uint256 i = 0; i < len && remaining > 0; ++i) {
+            address sys = _systemStakers[i];
+            uint256 inQueue = _exitPendingSum(sys);
+            uint256 available = _userState[sys].amount > inQueue ? _userState[sys].amount - inQueue : 0;
+            if (available == 0) continue;
+            uint256 deduct = remaining > available ? available : remaining;
+            // aderyn-fp-next-line(costly-loop)
+            _userState[sys].amount -= deduct;
+            remaining -= deduct;
+        }
+        if (remaining > 0) revert InsufficientSystemBacking();
+
+        _totalBacking -= amount;
+        IERC20(address(xk613)).safeTransferFrom(msg.sender, address(this), amount);
+        xk613.burnFrom(address(this), amount);
+        k613.safeTransfer(msg.sender, amount);
+
+        emit RewardsRedeemed(msg.sender, amount);
     }
 
     /// @notice Pauses staking and exit operations.

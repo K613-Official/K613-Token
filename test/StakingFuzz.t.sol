@@ -96,7 +96,7 @@ contract StakingFuzzTest is Test {
         vm.prank(user);
         staking.instantExit(0);
 
-        uint256 penalty = (amount * PENALTY_BPS) / 10_000;
+        uint256 penalty = (amount * PENALTY_BPS + 10_000 - 1) / 10_000;
         uint256 payout = amount - penalty;
 
         (uint256 deposited,) = staking.deposits(user);

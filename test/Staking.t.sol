@@ -537,27 +537,11 @@ contract StakingTest is Test {
         staking.initiateExit(100 * ONE);
     }
 
-    /// @notice test_InstantExit_PenaltyZeroBps: When instantExitPenaltyBps is 0, instantExit pays no penalty and full amount to user (no RD needed).
+    /// @notice test_InstantExit_PenaltyZeroBps: Constructor rejects instantExitPenaltyBps == 0 (L-01 fix).
     function test_InstantExit_PenaltyZeroBps() public {
         xK613 freshXk = new xK613(address(this));
-        Staking noPenaltyStaking = new Staking(address(k613), address(freshXk), LOCK_DURATION, 0);
-        freshXk.setMinter(address(noPenaltyStaking));
-        freshXk.setTransferWhitelist(address(noPenaltyStaking), true);
-
-        vm.prank(alice);
-        k613.approve(address(noPenaltyStaking), 100 * ONE);
-        vm.prank(alice);
-        noPenaltyStaking.stake(100 * ONE);
-        vm.prank(alice);
-        freshXk.approve(address(noPenaltyStaking), 100 * ONE);
-        vm.prank(alice);
-        noPenaltyStaking.initiateExit(100 * ONE);
-        vm.warp(block.timestamp + 1 days);
-
-        uint256 before = k613.balanceOf(alice);
-        vm.prank(alice);
-        noPenaltyStaking.instantExit(0);
-        assertEq(k613.balanceOf(alice), before + 100 * ONE);
+        vm.expectRevert(Staking.InvalidBps.selector);
+        new Staking(address(k613), address(freshXk), LOCK_DURATION, 0);
     }
 
     /// @notice test_Pause_BlocksInitiateExit: When Staking is paused, initiateExit() reverts.

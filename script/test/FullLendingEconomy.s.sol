@@ -157,6 +157,8 @@ contract FullLendingEconomyCycle is Script {
         xk.setTransferWhitelist(address(treasury), true);
 
         staking.setRewardsDistributor(address(rd));
+        staking.addSystemStaker(address(rd));
+        staking.addSystemStaker(address(treasury));
         rd.setStaking(address(staking));
         rd.grantRole(rd.REWARDS_NOTIFIER_ROLE(), address(treasury));
 
@@ -340,6 +342,11 @@ contract FullLendingEconomyCycle is Script {
         if (block.timestamp < nextAt) {
             vm.warp(nextAt);
         }
+    }
+
+    function _availableSystemBacking(ProtocolState memory protocol) internal view returns (uint256 total) {
+        total += _stakingExitableXk613(protocol.staking, address(protocol.rd));
+        total += _stakingExitableXk613(protocol.staking, address(protocol.treasury));
     }
 
     function _stakingExitableXk613(Staking staking, address user) internal view returns (uint256) {
@@ -815,6 +822,51 @@ contract FullLendingEconomyCycle is Script {
             uint256 kPost = protocol.k613.balanceOf(user);
             _logBalanceDelta("user after instantExit chunk (K613)", address(protocol.k613), user, kPre, kPost);
             console.log("Staking instant exit chunk user:", user);
+            vm.stopBroadcast();
+            vm.startBroadcast(adminPk);
+        }
+
+        // H-01 FIX: redeem excess reward xK613 via redeemRewards
+        // First, advance epoch so pending penalty K613 gets staked → increases system backing
+        _warpUntilEpochReady(protocol.rd);
+        try protocol.rd.advanceEpoch() {
+            console.log("advanceEpoch before redeemRewards: OK (pending K613 staked)");
+        } catch {
+            console.log("advanceEpoch before redeemRewards: skipped");
+        }
+
+        (uint256 stakedFinal,) = protocol.staking.deposits(user);
+        uint256 xWalletFinal = x.balanceOf(user);
+        uint256 excess = xWalletFinal > stakedFinal ? xWalletFinal - stakedFinal : 0;
+        if (excess > 0) {
+            // Cap redeem to available system-staker backing (RD + Treasury)
+            uint256 availableBacking = _availableSystemBacking(protocol);
+            uint256 redeemAmount = excess > availableBacking ? availableBacking : excess;
+
+            vm.stopBroadcast();
+            vm.startBroadcast(userPk);
+            console.log("--- redeemRewards: user has excess reward xK613 ---");
+            console.log("  user:", user);
+            console.log("  staked position:", stakedFinal / 1 ether);
+            console.log("  xK613 wallet:", xWalletFinal / 1 ether);
+            console.log("  excess (reward xK613):", excess / 1 ether);
+            console.log("  available system backing:", availableBacking / 1 ether);
+            console.log("  redeem amount (capped):", redeemAmount / 1 ether);
+            if (redeemAmount > 0) {
+                uint256 kPreRedeem = protocol.k613.balanceOf(user);
+                x.approve(address(protocol.staking), redeemAmount);
+                try protocol.staking.redeemRewards(redeemAmount) {
+                    uint256 kPostRedeem = protocol.k613.balanceOf(user);
+                    _logBalanceDelta(
+                        "user after redeemRewards (K613)", address(protocol.k613), user, kPreRedeem, kPostRedeem
+                    );
+                    console.log("  redeemed K613:", (kPostRedeem - kPreRedeem) / 1 ether);
+                } catch {
+                    console.log("  redeemRewards reverted -- skipped");
+                }
+            } else {
+                console.log("  no system backing available -- skip redeem");
+            }
             vm.stopBroadcast();
             vm.startBroadcast(adminPk);
         }

@@ -67,7 +67,7 @@ contract TreasuryTest is Test {
     function setUp() public {
         k613 = new K613(address(this));
         xk613 = new xK613(address(this));
-        staking = new Staking(address(k613), address(xk613), 7 days, 0);
+        staking = new Staking(address(k613), address(xk613), 7 days, 5_000);
         distributor = new RewardsDistributor(address(xk613), address(xk613), address(k613), EPOCH);
         treasury = new Treasury(address(k613), address(xk613), address(staking), address(distributor));
 
