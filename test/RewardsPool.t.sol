@@ -51,7 +51,7 @@ contract RewardsDistributorTest is Test {
         token = new xK613(address(this));
         k613 = new K613(address(this));
         k613.mint(address(this), 100_000 * ONE);
-        staking = new Staking(address(k613), address(token), 7 days, 0);
+        staking = new Staking(address(k613), address(token), 7 days, 5_000);
         token.setMinter(address(staking));
         token.grantRole(token.MINTER_ROLE(), address(this));
         distributor = new RewardsDistributor(address(token), address(token), address(k613), EPOCH);
@@ -412,7 +412,7 @@ contract RewardsDistributorTest is Test {
     /// @notice test_FullFlow_Stake_Initiate_Exit_Claim: Full flow — stake, deposit to RD, notify reward, withdraw from RD, initiateExit, wait lock, exit, claim; user gets K613 back and claim share correct.
     function test_FullFlow_Stake_Initiate_Exit_Claim() public {
         K613 k613Local = new K613(address(this));
-        Staking staking = new Staking(address(k613Local), address(token), 7 days, 0);
+        Staking staking = new Staking(address(k613Local), address(token), 7 days, 5_000);
         token.setMinter(address(staking));
         token.grantRole(token.MINTER_ROLE(), address(this));
         token.setTransferWhitelist(address(staking), true);
@@ -653,7 +653,7 @@ contract RewardsDistributorTest is Test {
     function test_RewardAccounting_NotifyWhenPoolEmpty_FirstDepositorGetsAll() public {
         xK613 freshToken = new xK613(address(this));
         K613 freshK613 = new K613(address(this));
-        Staking freshStaking = new Staking(address(freshK613), address(freshToken), 7 days, 0);
+        Staking freshStaking = new Staking(address(freshK613), address(freshToken), 7 days, 5_000);
         freshToken.setMinter(address(freshStaking));
         freshToken.grantRole(freshToken.MINTER_ROLE(), address(this));
         freshToken.setTransferWhitelist(address(distributor), true);
@@ -752,7 +752,7 @@ contract RewardsDistributorTest is Test {
     function test_RewardAccounting_DustThenLargeDeposit_FirstGetsAll() public {
         xK613 freshToken = new xK613(address(this));
         K613 freshK613 = new K613(address(this));
-        Staking freshStaking = new Staking(address(freshK613), address(freshToken), 7 days, 0);
+        Staking freshStaking = new Staking(address(freshK613), address(freshToken), 7 days, 5_000);
         freshToken.setMinter(address(freshStaking));
         freshToken.grantRole(freshToken.MINTER_ROLE(), address(this));
         freshToken.setTransferWhitelist(address(freshStaking), true);
@@ -870,10 +870,9 @@ contract RewardsDistributorTest is Test {
         uint256 accAfterFirst = distributor.accRewardPerShare();
         assertGt(accAfterFirst, accBefore);
 
-        // Second call in same block is allowed and simply has nothing left to distribute
+        // M-02 fix: second call in same block now correctly reverts
+        vm.expectRevert(RewardsDistributor.EpochNotReady.selector);
         distributor.advanceEpoch();
-        uint256 accAfterSecond = distributor.accRewardPerShare();
-        assertEq(accAfterSecond, accAfterFirst);
     }
 
     /// @notice When paused, advanceEpoch() reverts (whenNotPaused).
@@ -883,8 +882,8 @@ contract RewardsDistributorTest is Test {
         distributor.advanceEpoch();
     }
 
-    /// @notice When only pendingRewards exist (no penalties), advanceEpoch distributes them but does not change lastEpochFlushAt.
-    function test_AdvanceEpoch_PendingRewards_NoPenalties_DoesNotTouchLastEpochFlushAt() public {
+    /// @notice M-02 fix: advanceEpoch always updates lastEpochFlushAt, even when only pendingRewards exist (no penalties).
+    function test_AdvanceEpoch_PendingRewards_NoPenalties_UpdatesLastEpochFlushAt() public {
         // clear deposits and re-deposit a simple pool
         vm.prank(alice);
         distributor.withdraw(1_000 * ONE);
@@ -898,17 +897,17 @@ contract RewardsDistributorTest is Test {
         vm.stopPrank();
 
         // only pendingRewards, no penalties
-        uint256 tsBefore = distributor.nextEpochAt() - EPOCH;
         token.transfer(address(distributor), 10 * ONE);
         distributor.notifyReward(10 * ONE);
         assertEq(distributor.pendingPenalties(), 0);
 
         vm.warp(block.timestamp + EPOCH + 1);
+        uint256 tsNow = block.timestamp;
         distributor.advanceEpoch();
 
-        // rewards should be distributed, but epoch anchor stays the same
+        // rewards should be distributed, and epoch anchor updated to current timestamp
         assertGt(distributor.accRewardPerShare(), 0);
-        assertEq(distributor.nextEpochAt() - EPOCH, tsBefore);
+        assertEq(distributor.nextEpochAt() - EPOCH, tsNow);
     }
 
     /// @notice Fuzz: after notify/deposit/advanceEpoch/claim sequence, sum(claimed) + sum(pending) <= total notified + tolerance.
@@ -923,7 +922,7 @@ contract RewardsDistributorTest is Test {
 
         token.transfer(address(distributor), notifyAmount1);
         distributor.notifyReward(notifyAmount1);
-        vm.warp(block.timestamp + EPOCH + 1);
+        vm.warp(distributor.nextEpochAt());
         distributor.advanceEpoch();
         vm.prank(alice);
         distributor.claim();
@@ -932,7 +931,7 @@ contract RewardsDistributorTest is Test {
 
         token.transfer(address(distributor), notifyAmount2);
         distributor.notifyReward(notifyAmount2);
-        vm.warp(block.timestamp + EPOCH + 1);
+        vm.warp(distributor.nextEpochAt());
         distributor.advanceEpoch();
         vm.prank(alice);
         distributor.claim();

@@ -100,7 +100,7 @@ contract InvariantRewardsDistributorTest is StdInvariant, Test {
 
         k613 = new K613(address(this));
         xk613 = new xK613(address(this));
-        staking = new Staking(address(k613), address(xk613), LOCK_DURATION, 0);
+        staking = new Staking(address(k613), address(xk613), LOCK_DURATION, 5_000);
         distributor = new RewardsDistributor(address(xk613), address(xk613), address(k613), EPOCH_DURATION);
 
         staking.setRewardsDistributor(address(distributor));

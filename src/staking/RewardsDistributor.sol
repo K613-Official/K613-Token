@@ -82,6 +82,8 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
     event Claimed(address indexed account, uint256 amount);
     /// @notice Emitted when rewards are notified
     event RewardNotified(uint256 amount);
+    /// @notice Emitted when rewards are queued because totalDeposits is zero
+    event RewardQueued(uint256 amount);
     /// @notice Emitted when the staking contract is updated
     event StakingUpdated(address indexed staking);
     /// @notice Emitted when a user deposits stakingToken (xK613)
@@ -143,15 +145,13 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Claims accumulated rewards. Reverts while caller has an active exit vesting in Staking (withdraw from RD first, then exit; no claim during vesting).
     function claim() external nonReentrant whenNotPaused {
+        if (address(staking) != address(0) && IStaking(staking).exitQueueLength(msg.sender) > 0) {
+            revert ExitVestingActive();
+        }
         _updateUser(msg.sender);
         uint256 reward = userPendingRewards[msg.sender];
         if (reward == 0) revert NoRewards();
 
-        //aderyn-ignore-next-line(reentrancy-state-change)
-        if (address(staking) != address(0) && IStaking(staking).exitQueueLength(msg.sender) > 0) {
-            userPendingRewards[msg.sender] = reward;
-            revert ExitVestingActive();
-        }
         userPendingRewards[msg.sender] = 0;
         _stakeHeldK613();
         rewardToken.safeTransfer(msg.sender, reward);
@@ -164,6 +164,7 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         if (amount < MIN_NOTIFY) revert MinimumNotify();
         if (totalDeposits == 0) {
             pendingRewards += amount;
+            emit RewardQueued(amount);
             return;
         }
         accRewardPerShare += (amount * PRECISION) / totalDeposits;
@@ -177,13 +178,17 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         emit PenaltyAdded(amount);
     }
 
-    /// @notice Stakes any K613 held by this contract to get xK613
+    /// @notice Stakes any K613 held by this contract to get xK613. Non-fatal if Staking is paused.
     function _stakeHeldK613() internal {
         if (address(staking) == address(0)) return;
         uint256 balance = k613.balanceOf(address(this));
         if (balance < 1) return;
         k613.forceApprove(address(staking), balance);
-        IStaking(staking).stake(balance);
+        try IStaking(staking).stake(balance) {}
+        catch {
+            k613.forceApprove(address(staking), 0);
+            return;
+        }
         k613.forceApprove(address(staking), 0);
     }
 
@@ -198,11 +203,13 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
         _unpause();
     }
 
-    /// @notice Advances the epoch: flushes pending rewards/penalties.
+    /// @notice Advances the epoch: flushes pending rewards/penalties. Always advances the epoch marker.
     function advanceEpoch() external nonReentrant whenNotPaused {
         _stakeHeldK613();
         if (block.timestamp < lastEpochFlushAt + epochDuration) revert EpochNotReady();
         if (totalDeposits > 0) _distributePending();
+        lastEpochFlushAt = block.timestamp;
+        emit EpochAdvanced(block.timestamp);
     }
 
     /// @notice Returns the timestamp when the current epoch ends (or 0 if no epochs).
@@ -235,10 +242,6 @@ contract RewardsDistributor is AccessControl, Pausable, ReentrancyGuard {
             pendingPenalties = 0;
             accRewardPerShare += (amount * PRECISION) / totalDeposits;
             emit RewardNotified(amount);
-            if (epochPassed) {
-                lastEpochFlushAt = block.timestamp;
-                emit EpochAdvanced(block.timestamp);
-            }
         }
     }
 
