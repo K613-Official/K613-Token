@@ -96,6 +96,8 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     error InvalidLockDuration();
     /// @notice Thrown when there is not enough system backing to redeem rewards.
     error InsufficientSystemBacking();
+    /// @notice Thrown when attempting to redeem more xK613 than the caller's reward portion.
+    error ExceedsRewardPortion();
     /// @notice Thrown when attempting to add a system staker that is already registered.
     error AlreadySystemStaker();
     /// @notice Thrown when attempting to remove a system staker that is not registered.
@@ -379,6 +381,16 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     /// @param amount Amount of xK613 to redeem for K613.
     function redeemRewards(uint256 amount) external nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
+
+        // H-02 FIX: only allow redeeming xK613 that exceeds the caller's own staking position.
+        // Prevents stakers from bypassing exit penalties via redeemRewards.
+        uint256 inQueueCaller = _exitPendingSum(msg.sender);
+        uint256 ownPosition =
+            _userState[msg.sender].amount > inQueueCaller ? _userState[msg.sender].amount - inQueueCaller : 0;
+        // aderyn-fp-next-line(reentrancy-state-change)
+        uint256 walletBalance = IERC20(address(xk613)).balanceOf(msg.sender);
+        uint256 rewardPortion = walletBalance > ownPosition ? walletBalance - ownPosition : 0;
+        if (amount > rewardPortion) revert ExceedsRewardPortion();
 
         uint256 remaining = amount;
         uint256 len = _systemStakers.length;

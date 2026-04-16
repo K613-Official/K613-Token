@@ -144,6 +144,298 @@ contract AuditFindingsTest is Test {
     }
 
     // -----------------------------------------------------------------------
+    //  [H-02] FIX: redeemRewards cannot bypass exit penalties
+    // -----------------------------------------------------------------------
+
+    /// @notice A staker who holds ONLY staking xK613 (no reward portion) cannot
+    ///         call redeemRewards to bypass exit penalties. ExceedsRewardPortion reverts.
+    function test_H02_RedeemRewards_CannotBypassExitPenalty() public {
+        staking.addSystemStaker(address(distributor));
+        staking.addSystemStaker(address(treasury));
+
+        // Alice stakes 1000 K613 -> gets 1000 xK613
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        vm.stopPrank();
+
+        // Alice holds exactly 1000 xK613 from staking — zero reward portion
+        uint256 aliceXK613 = xk613.balanceOf(alice);
+        (uint256 aliceStaked,) = staking.deposits(alice);
+        assertEq(aliceXK613, aliceStaked, "Alice wallet == staked amount, no rewards");
+
+        // FIX: redeemRewards reverts because rewardPortion == 0
+        vm.startPrank(alice);
+        xk613.approve(address(staking), 1_000 * ONE);
+        vm.expectRevert(Staking.ExceedsRewardPortion.selector);
+        staking.redeemRewards(1_000 * ONE);
+        vm.stopPrank();
+
+        // Even 1 wei should revert
+        vm.startPrank(alice);
+        vm.expectRevert(Staking.ExceedsRewardPortion.selector);
+        staking.redeemRewards(1);
+        vm.stopPrank();
+    }
+
+    /// @notice A staker who also earned rewards CAN redeem only the reward excess,
+    ///         but NOT their staked portion.
+    function test_H02_RedeemRewards_OnlyRewardPortionAllowed() public {
+        staking.addSystemStaker(address(distributor));
+        staking.addSystemStaker(address(treasury));
+
+        // Alice stakes 1000 K613
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(1_000 * ONE);
+        vm.stopPrank();
+
+        // Bob stakes and instant-exits to generate penalty rewards
+        vm.startPrank(bob);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(staking), 1_000 * ONE);
+        staking.initiateExit(1_000 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        staking.instantExit(0);
+
+        // Advance epoch to flush penalty rewards
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+        distributor.advanceEpoch();
+
+        // Alice claims rewards
+        vm.prank(alice);
+        distributor.withdraw(1_000 * ONE);
+        vm.prank(alice);
+        distributor.claim();
+
+        uint256 aliceXK613 = xk613.balanceOf(alice);
+        (uint256 aliceStaked,) = staking.deposits(alice);
+        uint256 rewardPortion = aliceXK613 - aliceStaked;
+        assertGt(rewardPortion, 0, "Alice has reward xK613");
+
+        // FIX: trying to redeem MORE than reward portion reverts
+        vm.startPrank(alice);
+        xk613.approve(address(staking), aliceXK613);
+        vm.expectRevert(Staking.ExceedsRewardPortion.selector);
+        staking.redeemRewards(rewardPortion + 1);
+        vm.stopPrank();
+
+        // FIX: redeeming exactly the reward portion succeeds
+        uint256 k613Before = k613.balanceOf(alice);
+        vm.startPrank(alice);
+        staking.redeemRewards(rewardPortion);
+        vm.stopPrank();
+        assertEq(k613.balanceOf(alice) - k613Before, rewardPortion, "Only reward portion redeemed");
+
+        // After redeeming, Alice still has her staking position intact
+        (uint256 aliceStakedAfter,) = staking.deposits(alice);
+        assertEq(aliceStakedAfter, 1_000 * ONE, "Staking position unchanged");
+    }
+
+    // -----------------------------------------------------------------------
+    //  [H-02] ADVERSARIAL: Attempts to break the redeemRewards fix
+    // -----------------------------------------------------------------------
+
+    /// @dev Helper: Bob stakes 1000, instant-exits (50% penalty), advance epoch.
+    function _generatePenaltyRewards() internal {
+        vm.startPrank(bob);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(staking), 1_000 * ONE);
+        staking.initiateExit(1_000 * ONE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        staking.instantExit(0);
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+        distributor.advanceEpoch();
+    }
+
+    /// @dev Helper: Alice stakes 1000, deposits to RD, generates rewards, withdraws & claims.
+    ///      Returns the reward xK613 amount Alice earned.
+    function _setupAliceWithRewards() internal returns (uint256 rewards) {
+        staking.addSystemStaker(address(distributor));
+        staking.addSystemStaker(address(treasury));
+
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(1_000 * ONE);
+        vm.stopPrank();
+
+        _generatePenaltyRewards();
+
+        vm.prank(alice);
+        distributor.withdraw(1_000 * ONE);
+        vm.prank(alice);
+        distributor.claim();
+
+        (uint256 staked,) = staking.deposits(alice);
+        rewards = xk613.balanceOf(alice) - staked;
+        assertGt(rewards, 0, "Alice has reward xK613");
+    }
+
+    /// @notice ATTACK: initiateExit(800) to reduce ownPosition, then redeemRewards.
+    ///         RESULT: rewardPortion unchanged -- wallet and ownPosition drop equally.
+    function test_H02_Attack_InitiateExitDoesNotInflateRewardPortion() public {
+        uint256 rewards = _setupAliceWithRewards();
+
+        vm.startPrank(alice);
+        xk613.approve(address(staking), type(uint256).max);
+        staking.initiateExit(800 * ONE);
+
+        // After initiateExit(800): wallet -= 800, ownPosition = 1000-800 = 200
+        // rewardPortion = (wallet-800) - 200 = rewards (unchanged!)
+        vm.expectRevert(Staking.ExceedsRewardPortion.selector);
+        staking.redeemRewards(rewards + 1);
+
+        // Exact reward portion still works
+        staking.redeemRewards(rewards);
+        vm.stopPrank();
+    }
+
+    /// @notice ATTACK: stake extra K613 to inflate wallet xK613 balance.
+    ///         RESULT: ownPosition grows equally -- rewardPortion unchanged.
+    function test_H02_Attack_StakeMoreDoesNotIncreaseRewardPortion() public {
+        uint256 rewards = _setupAliceWithRewards();
+
+        // Stake 5000 more -> wallet_xK613 jumps by 5000, but amount also jumps by 5000
+        vm.startPrank(alice);
+        k613.approve(address(staking), 5_000 * ONE);
+        staking.stake(5_000 * ONE);
+
+        xk613.approve(address(staking), type(uint256).max);
+        vm.expectRevert(Staking.ExceedsRewardPortion.selector);
+        staking.redeemRewards(rewards + 1);
+
+        staking.redeemRewards(rewards);
+        vm.stopPrank();
+    }
+
+    /// @notice ATTACK: many small redeems to exceed total reward portion.
+    ///         RESULT: total redeemed bounded by original rewards. Next call reverts.
+    function test_H02_Attack_RepeatedSmallRedeems_Bounded() public {
+        uint256 rewards = _setupAliceWithRewards();
+        uint256 chunk = rewards / 4;
+        assertGt(chunk, 0);
+
+        vm.startPrank(alice);
+        xk613.approve(address(staking), type(uint256).max);
+
+        uint256 totalRedeemed;
+        for (uint256 i = 0; i < 4; i++) {
+            staking.redeemRewards(chunk);
+            totalRedeemed += chunk;
+        }
+        uint256 dust = rewards - totalRedeemed;
+        if (dust > 0) {
+            staking.redeemRewards(dust);
+            totalRedeemed += dust;
+        }
+
+        assertEq(totalRedeemed, rewards, "Total redeemed == total rewards");
+
+        // Nothing left -- must revert
+        vm.expectRevert(Staking.ExceedsRewardPortion.selector);
+        staking.redeemRewards(1);
+        vm.stopPrank();
+    }
+
+    /// @notice ATTACK: initiateExit/cancelExit churn then redeemRewards.
+    ///         RESULT: rewardPortion identical throughout cycle.
+    function test_H02_Attack_CancelExitCycleNoEffect() public {
+        uint256 rewards = _setupAliceWithRewards();
+
+        vm.startPrank(alice);
+        xk613.approve(address(staking), type(uint256).max);
+
+        // Rapid churn: initiate/cancel multiple times
+        staking.initiateExit(500 * ONE);
+        staking.cancelExit(0);
+        staking.initiateExit(200 * ONE);
+        staking.cancelExit(0);
+        staking.initiateExit(900 * ONE);
+        staking.cancelExit(0);
+
+        // rewardPortion unchanged after all the churn
+        vm.expectRevert(Staking.ExceedsRewardPortion.selector);
+        staking.redeemRewards(rewards + 1);
+
+        staking.redeemRewards(rewards);
+        vm.stopPrank();
+    }
+
+    /// @notice EDGE CASE: user who is ALSO a system staker can recursively
+    ///         drain their own position penalty-free. Each redeem reduces
+    ///         their amount (as system staker), which lowers ownPosition,
+    ///         creating artificial rewardPortion for the next call.
+    ///         REQUIRES admin misconfiguration (addSystemStaker intended for
+    ///         protocol contracts only, not user EOAs).
+    function test_H02_Edge_SelfSystemStaker_DrainOwnPosition() public {
+        // Admin mistake: adds Alice as system staker
+        staking.addSystemStaker(address(alice));
+
+        vm.startPrank(alice);
+        k613.approve(address(staking), 1_000 * ONE);
+        staking.stake(1_000 * ONE);
+        xk613.approve(address(distributor), 1_000 * ONE);
+        distributor.deposit(1_000 * ONE);
+        vm.stopPrank();
+
+        _generatePenaltyRewards();
+
+        vm.prank(alice);
+        distributor.withdraw(1_000 * ONE);
+        vm.prank(alice);
+        distributor.claim();
+
+        // Alice: 1500 xK613 (1000 staked + 500 rewards), amount=1000
+        (uint256 stakedBefore,) = staking.deposits(alice);
+        uint256 rewards = xk613.balanceOf(alice) - stakedBefore;
+        assertEq(stakedBefore, 1_000 * ONE);
+        assertEq(rewards, 500 * ONE);
+
+        uint256 k613Before = k613.balanceOf(alice);
+
+        vm.startPrank(alice);
+        xk613.approve(address(staking), type(uint256).max);
+
+        // 1st redeem (500): legit rewardPortion = 1500 - 1000 = 500
+        // Deducts 500 from Alice's OWN system-staker position -> amount = 500
+        staking.redeemRewards(rewards);
+
+        (uint256 stakedMid,) = staking.deposits(alice);
+        assertEq(stakedMid, 500 * ONE, "Position reduced by own-system-staker deduction");
+
+        // NOW: wallet = 1000, ownPosition = 500 -> artificial rewardPortion = 500
+        // 2nd redeem (500): drains remaining system position
+        staking.redeemRewards(rewards);
+
+        vm.stopPrank();
+
+        // Result: Alice recovered full 1000 K613 stake WITHOUT exit penalty
+        (uint256 stakedAfter,) = staking.deposits(alice);
+        assertEq(stakedAfter, 0, "Position fully drained");
+
+        uint256 k613Gained = k613.balanceOf(alice) - k613Before;
+        assertEq(k613Gained, 1_000 * ONE, "Full stake recovered penalty-free");
+
+        // 500 reward xK613 stuck in wallet -- no system backing left
+        assertEq(xk613.balanceOf(alice), 500 * ONE, "Reward xK613 orphaned");
+
+        // Cannot redeem further: passes ExceedsRewardPortion but fails on backing
+        vm.prank(alice);
+        vm.expectRevert(Staking.InsufficientSystemBacking.selector);
+        staking.redeemRewards(1);
+    }
+
+    // -----------------------------------------------------------------------
     //  [M-01] FIX: Paused Staking no longer blocks claim/advanceEpoch (try/catch)
     // -----------------------------------------------------------------------
 
