@@ -7,13 +7,11 @@ broadcast/
 
 
 # Docs
-docs/
+
 
 # Dotenv file
 .env
 .cursor
 .claude
 .broadcast
-script/COMMANDS.md
-script/LENDING_INTEGRATION_GUIDE.md
 

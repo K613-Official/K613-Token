@@ -67,7 +67,7 @@ import {RewardsDistributor} from "./RewardsDistributor.sol";
 contract Staking is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    uint256 public constant MAX_EXIT_REQUESTS = 10;
+    uint256 public maxExitRequests;
     uint256 public constant MAX_BASIS_POINTS = 10_000;
 
     /// @notice Thrown when a zero address is passed where a non-zero address is required.
@@ -94,6 +94,8 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     error AmountExceedsStake();
     /// @notice Thrown when lockDuration is zero.
     error InvalidLockDuration();
+    /// @notice Thrown when maxExitRequests is zero.
+    error InvalidMaxExitRequests();
     /// @notice Thrown when there is not enough system backing to redeem rewards.
     error InsufficientSystemBacking();
     /// @notice Thrown when attempting to redeem more xK613 than the caller's reward portion.
@@ -151,6 +153,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     event RewardsDistributorUpdated(address indexed distributor);
     /// @notice Emitted when instantExitPenaltyBps is updated
     event InstantExitPenaltyBpsUpdated(uint256 oldBps, uint256 newBps);
+    event MaxExitRequestsUpdated(uint256 oldValue, uint256 newValue);
     /// @notice Emitted when a user redeems reward xK613 for K613
     event RewardsRedeemed(address indexed account, uint256 amount);
     /// @notice Emitted when a system staker is added or removed
@@ -171,6 +174,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         xk613 = xK613(xk613Token);
         lockDuration = lockDuration_;
         instantExitPenaltyBps = instantExitPenaltyBps_;
+        maxExitRequests = 100;
     }
 
     /// @notice Sets the rewards distributor contract. Pass address(0) to disable; instant exit with penalty will revert until set.
@@ -178,6 +182,10 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     function setRewardsDistributor(address distributor) external onlyRole(DEFAULT_ADMIN_ROLE) {
         rewardsDistributor = RewardsDistributor(distributor);
         emit RewardsDistributorUpdated(distributor);
+    }
+
+    function MAX_EXIT_REQUESTS() external view returns (uint256) {
+        return maxExitRequests;
     }
 
     /// @notice Returns the total deposited amount and exit queue for a user.
@@ -243,7 +251,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Initiates exit: pulls xK613 from caller and adds request to queue.
-    /// @dev Caller must approve Staking for xK613. At most `MAX_EXIT_REQUESTS` per user.
+    /// @dev Caller must approve Staking for xK613. At most `maxExitRequests` per user.
     /// @param amount Amount of xK613 to schedule for exit.
     function initiateExit(uint256 amount) external nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
@@ -254,7 +262,7 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         if (amount > s.amount - inQueue) revert AmountExceedsStake();
         // aderyn-ignore-next-line(reentrancy-state-change)
         if (xk613.balanceOf(msg.sender) < amount) revert InsufficientxK613();
-        if (s.exitQueue.length >= MAX_EXIT_REQUESTS) revert ExitQueueFull();
+        if (s.exitQueue.length >= maxExitRequests) revert ExitQueueFull();
         s.exitQueue.push(ExitRequest({amount: amount, exitInitiatedAt: block.timestamp}));
         IERC20(address(xk613)).safeTransferFrom(msg.sender, address(this), amount);
 
@@ -343,6 +351,12 @@ contract Staking is AccessControl, Pausable, ReentrancyGuard {
         if (newBps == 0 || newBps > MAX_BASIS_POINTS) revert InvalidBps();
         emit InstantExitPenaltyBpsUpdated(instantExitPenaltyBps, newBps);
         instantExitPenaltyBps = newBps;
+    }
+
+    function setMaxExitRequests(uint256 newValue) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newValue == 0) revert InvalidMaxExitRequests();
+        emit MaxExitRequestsUpdated(maxExitRequests, newValue);
+        maxExitRequests = newValue;
     }
 
     /// @notice Registers a system staker whose position backs reward xK613 (e.g. RewardsDistributor, Treasury).

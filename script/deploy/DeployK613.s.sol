@@ -9,15 +9,26 @@ import {RewardsDistributor} from "src/staking/RewardsDistributor.sol";
 import {Treasury} from "src/treasury/Treasury.sol";
 
 /// @title DeployK613
-/// @notice Deploys K613 staking stack on Arbitrum Sepolia testnet.
+/// @notice Deploys K613 staking stack on Monad mainnet (chainId 143).
+/// @dev Production parameters per gitbook tokenomics:
+///        LOCK_DURATION = 90 days  (xK613 standard exit queue)
+///        EPOCH_DURATION = 7 days  (RewardsDistributor weekly flush cadence)
+///        INSTANT_EXIT_PENALTY_BPS = 5000  (50% — penalty redistributed to remaining holders)
+///      The script reverts if not run on Monad mainnet to prevent accidental cross-network deploys.
 contract DeployK613 is Script {
-    uint256 private constant LOCK_DURATION = 120;
-    uint256 private constant EPOCH_DURATION = 120;
+    uint256 private constant LOCK_DURATION = 90 days;
+    uint256 private constant EPOCH_DURATION = 7 days;
     uint256 private constant INSTANT_EXIT_PENALTY_BPS = 5000;
+    uint256 private constant MAX_EXIT_REQUESTS = 100;
 
-    uint256 private constant ARBITRUM_SEPOLIA = 421_614;
+    uint256 private constant MONAD_MAINNET = 143;
+
+    /// @notice Reverts if invoked on a chain other than Monad mainnet.
+    error WrongNetwork(uint256 chainId);
 
     function run() external {
+        if (block.chainid != MONAD_MAINNET) revert WrongNetwork(block.chainid);
+
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
 
         vm.startBroadcast(deployerPrivateKey);
@@ -56,6 +67,11 @@ contract DeployK613 is Script {
 
         // Staking -> RewardsDistributor
         staking.setRewardsDistributor(address(distributor));
+        staking.setMaxExitRequests(MAX_EXIT_REQUESTS);
+
+        // System stakers: RD + Treasury back reward xK613 so users can redeemRewards
+        staking.addSystemStaker(address(distributor));
+        staking.addSystemStaker(address(treasury));
 
         // RewardsDistributor: Staking gets REWARDS_NOTIFIER_ROLE (via setStaking)
         distributor.setStaking(address(staking));
@@ -71,11 +87,13 @@ contract DeployK613 is Script {
         _logSummary(address(k613), address(xk613), address(staking), address(distributor), address(treasury));
     }
 
-    function _logTreasuryBuybackRouterNotice() internal view {
-        if (block.chainid != ARBITRUM_SEPOLIA) return;
-        console.log("Treasury.buybackV3ExactInputSingle calls exactInputSingle on SwapRouter02 (Uniswap V3 periphery).");
+    function _logTreasuryBuybackRouterNotice() internal pure {
+        console.log("Treasury.buybackV3ExactInputSingle calls exactInputSingle on Uniswap V3 SwapRouter02 (Monad).");
         console.log(
-            "Arbitrum Sepolia SwapRouter02 0x101F443B4d1b059569D643917553c771E1b9663E; whitelist via setRouterWhitelist. Universal Router uses a different ABI."
+            "Monad mainnet SwapRouter02: 0xfE31F71C1b106EAc32F1A19239c9a9A72ddfb900 (whitelist via Treasury.setRouterWhitelist)."
+        );
+        console.log(
+            "Verified V3 contracts: Factory 0x204FAca1764B154221e35c0d20aBb3c525710498, NPM 0x7197E214c0b767cFB76Fb734ab638E2c192F4E53, QuoterV2 0x661E93cca42AfacB172121EF892830cA3b70F08d."
         );
     }
 

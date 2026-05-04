@@ -1,26 +1,21 @@
 {
-
+  "lib/K613-Protocol": {
+    "rev": "7974591806e1b6c760a83a7c18f6724ed8964f44"
+  },
   "lib/forge-std": {
     "tag": {
       "name": "v1.14.0",
       "rev": "1801b0541f4fda118a10798fd3486bb7051c5dd6"
     }
   },
-
   "lib/openzeppelin-contracts": {
-    "tag": {
-      "name": "v5.5.0",
-      "rev": "fcbae5394ae8ad52d8e580a3477db99814b9d565"
-    }
+    "rev": "acd4ff74de833399287ed6b31b4debf6b2b35527"
   },
-
   "lib/swap-router-contracts": {
     "tag": {
       "name": "v1.3.0",
       "rev": "c696aada49b33c8e764e6f0bd0a0a56bd8aa455f"
     }
-  },
-
   },
   "lib/v3-core": {
     "tag": {

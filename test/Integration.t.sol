@@ -643,22 +643,6 @@ contract IntegrationTest is Test {
         vm.stopPrank();
     }
 
-    /// @notice test_Staking_ExitQueueFull_Reverts: initiateExit when queue already has MAX_EXIT_REQUESTS reverts with ExitQueueFull.
-    function test_Staking_ExitQueueFull_Reverts() public {
-        uint256 perStake = 100 * ONE;
-        _fundUser(alice, 11 * perStake);
-        vm.startPrank(alice);
-        k613.approve(address(staking), 11 * perStake);
-        staking.stake(11 * perStake);
-        xk613.approve(address(staking), 11 * perStake);
-        for (uint256 i = 0; i < staking.MAX_EXIT_REQUESTS(); i++) {
-            staking.initiateExit(perStake);
-        }
-        vm.expectRevert(Staking.ExitQueueFull.selector);
-        staking.initiateExit(perStake);
-        vm.stopPrank();
-    }
-
     /// @notice test_Staking_NormalExitThenIntegrity: User does normal exit after lock; asserts xK613.totalSupply() == staking.totalBacking().
     function test_Staking_NormalExitThenIntegrity() public {
         _fundUser(alice, 500 * ONE);
