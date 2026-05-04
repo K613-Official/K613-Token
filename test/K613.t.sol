@@ -3,6 +3,7 @@ pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
 import {K613} from "../src/token/K613.sol";
+import {ERC20Capped} from "openzeppelin-contracts/contracts/token/ERC20/extensions/ERC20Capped.sol";
 
 contract K613Test is Test {
     K613 private token;
@@ -163,5 +164,48 @@ contract K613Test is Test {
         vm.prank(minter);
         vm.expectRevert();
         token.burnFrom(alice, 1e18);
+    }
+
+    /// @notice testMaxSupplyConstant: MAX_SUPPLY equals 100,000,000 K613 and matches cap().
+    function testMaxSupplyConstant() public view {
+        assertEq(token.MAX_SUPPLY(), 100_000_000e18);
+        assertEq(token.cap(), 100_000_000e18);
+    }
+
+    /// @notice testMintUpToCapSucceeds: minting exactly MAX_SUPPLY at once succeeds; totalSupply equals cap.
+    function testMintUpToCapSucceeds() public {
+        uint256 max = token.MAX_SUPPLY();
+        vm.prank(minter);
+        token.mint(alice, max);
+        assertEq(token.totalSupply(), max);
+        assertEq(token.balanceOf(alice), max);
+    }
+
+    /// @notice testMintAboveCapReverts: a mint that would push totalSupply over MAX_SUPPLY reverts with ERC20ExceededCap.
+    function testMintAboveCapReverts() public {
+        vm.startPrank(minter);
+        token.mint(alice, token.MAX_SUPPLY());
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC20Capped.ERC20ExceededCap.selector, token.MAX_SUPPLY() + 1, token.MAX_SUPPLY())
+        );
+        token.mint(alice, 1);
+        vm.stopPrank();
+    }
+
+    /// @notice testBurnAndRemintWithinCap: after a burn, remint up to cap is allowed (cap tracks totalSupply, not cumulative).
+    function testBurnAndRemintWithinCap() public {
+        vm.startPrank(minter);
+        token.mint(alice, token.MAX_SUPPLY());
+        vm.stopPrank();
+
+        vm.prank(alice);
+        token.approve(minter, 1_000e18);
+
+        vm.startPrank(minter);
+        token.burnFrom(alice, 1_000e18);
+        token.mint(bob, 1_000e18);
+        vm.stopPrank();
+
+        assertEq(token.totalSupply(), token.MAX_SUPPLY());
     }
 }

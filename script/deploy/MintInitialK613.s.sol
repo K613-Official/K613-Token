@@ -5,11 +5,18 @@ import {Script, console} from "forge-std/Script.sol";
 import {K613} from "src/token/K613.sol";
 
 /// @title MintInitialK613
-/// @notice Mints initial K613 supply to deployer
+/// @notice TEST-ONLY: mints 1M K613 to the deployer for economic simulations.
+/// @dev Hard-blocked on Monad mainnet (chainId 143). For TGE production, use PremintK613.s.sol.
 contract MintInitialK613 is Script {
     uint256 private constant INITIAL_SUPPLY = 1_000_000 * 1e18;
+    uint256 private constant MONAD_MAINNET = 143;
+
+    /// @notice Reverts if invoked on Monad mainnet — this script is for local sims and dev networks only.
+    error NotForMainnet();
 
     function run() external {
+        if (block.chainid == MONAD_MAINNET) revert NotForMainnet();
+
         address k613Addr = vm.envAddress("K613_ADDRESS");
         uint256 pk = vm.envUint("PRIVATE_KEY");
         address recipient = vm.addr(pk);

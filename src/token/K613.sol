@@ -2,19 +2,23 @@
 pragma solidity 0.8.34;
 
 import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
+import {ERC20Capped} from "openzeppelin-contracts/contracts/token/ERC20/extensions/ERC20Capped.sol";
 import {AccessControl} from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
 
 /// @title K613
 /// @notice ERC20 governance token with mint/burn capabilities and role-based access control.
-/// @dev Extends ERC20 with MINTER_ROLE and PAUSER_ROLE. All transfers are blocked when paused.
-contract K613 is ERC20, AccessControl, Pausable {
+/// @dev Extends ERC20 with MINTER_ROLE and PAUSER_ROLE. Supply is hard-capped at MAX_SUPPLY. All transfers are blocked when paused.
+contract K613 is ERC20Capped, AccessControl, Pausable {
     /// @notice Thrown when a zero address is passed as a parameter.
     error ZeroAddress();
     /// @notice Thrown when a non-minter attempts to mint or burn tokens.
     error OnlyMinter();
     /// @notice Thrown when the burn amount exceeds the allowance.
     error BurnAmountExceedsAllowance();
+
+    /// @notice Hard cap on total supply, enforced by ERC20Capped at every mint. 100,000,000 K613.
+    uint256 public constant MAX_SUPPLY = 100_000_000e18;
 
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
@@ -29,7 +33,7 @@ contract K613 is ERC20, AccessControl, Pausable {
 
     /// @notice Deploys the K613 token with the initial minter.
     /// @param initialMinter Address that will be granted MINTER_ROLE for minting and burning.
-    constructor(address initialMinter) ERC20("K613", "K613") {
+    constructor(address initialMinter) ERC20("K613", "K613") ERC20Capped(MAX_SUPPLY) {
         if (initialMinter == address(0)) {
             revert ZeroAddress();
         }
@@ -88,8 +92,8 @@ contract K613 is ERC20, AccessControl, Pausable {
         _unpause();
     }
 
-    /// @dev Overrides _update to enforce pause state. All transfers revert when paused.
-    function _update(address from, address to, uint256 value) internal override {
+    /// @dev Overrides _update to enforce pause state and supply cap. All transfers revert when paused; mints above MAX_SUPPLY revert via ERC20Capped.
+    function _update(address from, address to, uint256 value) internal override(ERC20Capped) {
         _requireNotPaused();
         super._update(from, to, value);
     }

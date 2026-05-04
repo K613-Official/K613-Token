@@ -3,9 +3,9 @@ pragma solidity 0.8.34;
 
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20Metadata} from "openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {DataTypes} from "lib/L2-Protocol/src/contracts/protocol/libraries/types/DataTypes.sol";
-import {WadRayMath} from "lib/L2-Protocol/src/contracts/protocol/libraries/math/WadRayMath.sol";
-import {IScaledBalanceToken} from "lib/L2-Protocol/src/contracts/interfaces/IScaledBalanceToken.sol";
+import {DataTypes} from "lib/K613-Protocol/src/contracts/protocol/libraries/types/DataTypes.sol";
+import {WadRayMath} from "lib/K613-Protocol/src/contracts/protocol/libraries/math/WadRayMath.sol";
+import {IScaledBalanceToken} from "lib/K613-Protocol/src/contracts/interfaces/IScaledBalanceToken.sol";
 
 interface IPool {
     function getReserveData(address asset) external view returns (DataTypes.ReserveDataLegacy memory);

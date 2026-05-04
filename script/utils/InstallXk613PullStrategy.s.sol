@@ -5,9 +5,9 @@ import {Script, console} from "forge-std/Script.sol";
 import {Treasury} from "src/treasury/Treasury.sol";
 import {
     PullRewardsTransferStrategy
-} from "lib/L2-Protocol/src/contracts/rewards/transfer-strategies/PullRewardsTransferStrategy.sol";
-import {IEmissionManager} from "lib/L2-Protocol/src/contracts/rewards/interfaces/IEmissionManager.sol";
-import {ITransferStrategyBase} from "lib/L2-Protocol/src/contracts/rewards/interfaces/ITransferStrategyBase.sol";
+} from "lib/K613-Protocol/src/contracts/rewards/transfer-strategies/PullRewardsTransferStrategy.sol";
+import {IEmissionManager} from "lib/K613-Protocol/src/contracts/rewards/interfaces/IEmissionManager.sol";
+import {ITransferStrategyBase} from "lib/K613-Protocol/src/contracts/rewards/interfaces/ITransferStrategyBase.sol";
 
 interface IPoolLite {
     function ADDRESSES_PROVIDER() external view returns (address);

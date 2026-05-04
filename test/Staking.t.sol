@@ -521,20 +521,25 @@ contract StakingTest is Test {
     }
 
     /// @notice test_InitiateExit_ExitQueueFull: initiateExit when queue has MAX_EXIT_REQUESTS reverts with ExitQueueFull.
+    /// @dev Stakes enough xK613 to cover MAX_EXIT_REQUESTS+1 exit slots so the (N+1)th call genuinely hits the queue cap.
     function test_InitiateExit_ExitQueueFull() public {
+        uint256 maxRequests = staking.MAX_EXIT_REQUESTS();
+        uint256 perExit = 1 * ONE;
+        uint256 totalNeeded = perExit * (maxRequests + 1);
+
         vm.prank(alice);
-        k613.approve(address(staking), 1_100 * ONE);
+        k613.approve(address(staking), totalNeeded);
         vm.prank(alice);
-        staking.stake(1_100 * ONE);
+        staking.stake(totalNeeded);
         vm.prank(alice);
-        xk613.approve(address(staking), 1_100 * ONE);
-        for (uint256 i = 0; i < staking.MAX_EXIT_REQUESTS(); i++) {
+        xk613.approve(address(staking), totalNeeded);
+        for (uint256 i = 0; i < maxRequests; i++) {
             vm.prank(alice);
-            staking.initiateExit(100 * ONE);
+            staking.initiateExit(perExit);
         }
         vm.prank(alice);
         vm.expectRevert(Staking.ExitQueueFull.selector);
-        staking.initiateExit(100 * ONE);
+        staking.initiateExit(perExit);
     }
 
     /// @notice test_InstantExit_PenaltyZeroBps: Constructor rejects instantExitPenaltyBps == 0 (L-01 fix).

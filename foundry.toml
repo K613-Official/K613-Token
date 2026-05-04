@@ -5,6 +5,10 @@ libs = ["lib"]
 via_ir = true
 optimizer = true
 optimizer_runs = 200
+fs_permissions = [
+    { access = "read", path = "./script/deploy" },
+    { access = "read-write", path = "./test" }
+]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 solc ="0.8.34"

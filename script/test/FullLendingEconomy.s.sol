@@ -10,7 +10,7 @@ import {xK613} from "src/token/xK613.sol";
 import {Staking} from "src/staking/Staking.sol";
 import {RewardsDistributor} from "src/staking/RewardsDistributor.sol";
 import {Treasury} from "src/treasury/Treasury.sol";
-import {DataTypes} from "lib/L2-Protocol/src/contracts/protocol/libraries/types/DataTypes.sol";
+import {DataTypes} from "lib/K613-Protocol/src/contracts/protocol/libraries/types/DataTypes.sol";
 
 interface IPool {
     function ADDRESSES_PROVIDER() external view returns (address);
