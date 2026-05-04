@@ -644,14 +644,17 @@ contract IntegrationTest is Test {
     }
 
     /// @notice test_Staking_ExitQueueFull_Reverts: initiateExit when queue already has MAX_EXIT_REQUESTS reverts with ExitQueueFull.
+    /// @dev Stakes (MAX_EXIT_REQUESTS+1)*perStake so the (N+1)th exit attempt genuinely hits the queue cap.
     function test_Staking_ExitQueueFull_Reverts() public {
-        uint256 perStake = 100 * ONE;
-        _fundUser(alice, 11 * perStake);
+        uint256 maxRequests = staking.MAX_EXIT_REQUESTS();
+        uint256 perStake = 1 * ONE;
+        uint256 totalNeeded = perStake * (maxRequests + 1);
+        _fundUser(alice, totalNeeded);
         vm.startPrank(alice);
-        k613.approve(address(staking), 11 * perStake);
-        staking.stake(11 * perStake);
-        xk613.approve(address(staking), 11 * perStake);
-        for (uint256 i = 0; i < staking.MAX_EXIT_REQUESTS(); i++) {
+        k613.approve(address(staking), totalNeeded);
+        staking.stake(totalNeeded);
+        xk613.approve(address(staking), totalNeeded);
+        for (uint256 i = 0; i < maxRequests; i++) {
             staking.initiateExit(perStake);
         }
         vm.expectRevert(Staking.ExitQueueFull.selector);
