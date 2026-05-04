@@ -10,9 +10,11 @@ import {SeedInitialLP, INonfungiblePositionManager} from "../script/deploy/SeedI
 /// @dev Minimal USDC mock (6 decimals like real USDC).
 contract USDCMock is ERC20 {
     constructor() ERC20("USD Coin", "USDC") {}
+
     function decimals() public pure override returns (uint8) {
         return 6;
     }
+
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
@@ -130,7 +132,10 @@ contract SeedInitialLPTest is Test {
         (uint256 expectedAmt0, uint256 expectedAmt1) =
             address(k613) < address(usdc) ? (K613_LP_AMOUNT, USDC_LP_AMOUNT) : (USDC_LP_AMOUNT, K613_LP_AMOUNT);
         (,, uint24 _fee, int24 _tl, int24 _tu, uint256 a0, uint256 a1,,, address _r,) = npm.lastMintParams();
-        _fee; _tl; _tu; _r;
+        _fee;
+        _tl;
+        _tu;
+        _r;
         assertEq(a0, expectedAmt0, "amount0Desired must match token0");
         assertEq(a1, expectedAmt1, "amount1Desired must match token1");
     }

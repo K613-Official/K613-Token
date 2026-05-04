@@ -110,11 +110,7 @@ contract SeedInitialLP is Script {
     /// @dev   Internally handles K613 (18 dec) and USDC (6 dec) and the token0/token1 ordering.
     ///        - If K613 is token0: sqrt((priceK613InUsdcRaw * 2^192) / 1e18)
     ///        - If USDC is token0: sqrt((1e18 * 2^192) / priceK613InUsdcRaw)
-    function computeSqrtPriceX96(address k613, address usdc, uint256 priceK613InUsdcRaw)
-        public
-        pure
-        returns (uint160)
-    {
+    function computeSqrtPriceX96(address k613, address usdc, uint256 priceK613InUsdcRaw) public pure returns (uint160) {
         if (priceK613InUsdcRaw == 0) revert ZeroAmount();
         uint256 k613Unit = 1e18;
         uint256 q192 = uint256(1) << 192;
@@ -167,7 +163,8 @@ contract SeedInitialLP is Script {
     ) public returns (address pool, uint256 tokenId, uint128 liquidity, uint256 amount0Out, uint256 amount1Out) {
         if (k613Amount == 0 || usdcAmount == 0) revert ZeroAmount();
         if (slippageBps > 5000) revert SlippageBpsTooHigh(slippageBps); // hard cap at 50%
-        PreparedMint memory p = _prepare(k613, usdc, fee, sqrtPriceX96, k613Amount, usdcAmount, slippageBps, lpRecipient);
+        PreparedMint memory p =
+            _prepare(k613, usdc, fee, sqrtPriceX96, k613Amount, usdcAmount, slippageBps, lpRecipient);
         return _executeMint(npm, p, pk);
     }
 
@@ -216,9 +213,8 @@ contract SeedInitialLP is Script {
 
         vm.startBroadcast(pk);
 
-        pool = INonfungiblePositionManager(npm).createAndInitializePoolIfNecessary(
-            p.token0, p.token1, p.fee, p.sqrtPriceX96
-        );
+        pool = INonfungiblePositionManager(npm)
+            .createAndInitializePoolIfNecessary(p.token0, p.token1, p.fee, p.sqrtPriceX96);
         console.log("pool:             ", pool);
 
         IERC20(p.token0).approve(npm, p.amount0Desired);
