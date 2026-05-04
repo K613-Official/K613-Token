@@ -13,6 +13,3 @@
 [submodule "lib/K613-Protocol"]
 	path = lib/K613-Protocol
 	url = https://github.com/K613-Official/K613-Protocol
-[submodule "lib/k613-markets-config"]
-	path = lib/k613-markets-config
-	url = https://github.com/K613-Official/k613-markets-config
