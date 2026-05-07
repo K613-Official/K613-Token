@@ -57,7 +57,7 @@ contract PremintK613Test is Test {
     /// @dev Default Foundry chainid is 31337 (Anvil). Monad mainnet is 143.
     function testRun_RevertsOnWrongChain() public {
         vm.setEnv("K613_ADDRESS", vm.toString(address(token)));
-        vm.setEnv("GOVERNANCE_ADDRESS", vm.toString(governance));
+        vm.setEnv("MINT_RECIPIENT", vm.toString(governance));
         vm.setEnv("PRIVATE_KEY", vm.toString(DEPLOYER_PK));
         vm.expectRevert(abi.encodeWithSelector(PremintK613.WrongNetwork.selector, block.chainid));
         script.run();
