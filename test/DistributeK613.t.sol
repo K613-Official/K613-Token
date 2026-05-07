@@ -15,8 +15,8 @@ contract DistributeK613Test is Test {
     uint256 private constant DEPLOYER_PK = 0xA11CE;
     address private deployer;
 
-    address private incentivesController = address(0xE1);
-    address private lmReserve = address(0x102);
+    address private lmY1Treasury = address(0xE1); // mock for Treasury contract destination of LM-Y1
+    address private lmReserveMultiYear = address(0x102);
     address private polLp = address(0xC1);
     address private polReserve = address(0xC2);
     address private treasuryGov = address(0x715A);
@@ -48,8 +48,8 @@ contract DistributeK613Test is Test {
         _writeTestConfig(path);
         script.runWith(address(token), address(mgr), path, DEPLOYER_PK);
 
-        assertEq(token.balanceOf(incentivesController), 40_000_000e18, "LM-IncentivesController");
-        assertEq(token.balanceOf(lmReserve), 10_000_000e18, "LM-Reserve");
+        assertEq(token.balanceOf(lmY1Treasury), 25_000_000e18, "LM-Y1-Treasury");
+        assertEq(token.balanceOf(lmReserveMultiYear), 25_000_000e18, "LM-Reserve-Multi-Year");
         assertEq(token.balanceOf(polLp), 5_000_000e18, "POL-LP (bootstrap)");
         assertEq(token.balanceOf(polReserve), 10_000_000e18, "POL-Reserve (future LP)");
         assertEq(token.balanceOf(treasuryGov), 10_000_000e18, "Treasury-Gov");
@@ -81,8 +81,8 @@ contract DistributeK613Test is Test {
         script.runWith(address(token), address(mgr), path, DEPLOYER_PK);
 
         uint256 sum;
-        sum += token.balanceOf(incentivesController);
-        sum += token.balanceOf(lmReserve);
+        sum += token.balanceOf(lmY1Treasury);
+        sum += token.balanceOf(lmReserveMultiYear);
         sum += token.balanceOf(polLp);
         sum += token.balanceOf(polReserve);
         sum += token.balanceOf(treasuryGov);
@@ -169,9 +169,9 @@ contract DistributeK613Test is Test {
     function _writeTestConfig(string memory path) internal {
         string memory c = string.concat(
             '{"transferCount":7,"vestingCount":2,"transfers":[',
-            _t("LM-IncentivesController", incentivesController, "40000000000000000000000000"),
+            _t("LM-Y1-Treasury", lmY1Treasury, "25000000000000000000000000"),
             ",",
-            _t("LM-Reserve", lmReserve, "10000000000000000000000000"),
+            _t("LM-Reserve-Multi-Year", lmReserveMultiYear, "25000000000000000000000000"),
             ",",
             _t("POL-LP", polLp, "5000000000000000000000000"),
             ",",

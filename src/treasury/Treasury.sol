@@ -59,6 +59,10 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
 
     event Xk613PullAllowanceSet(address indexed spender, uint256 amount);
 
+    /// @notice Emitted when Treasury stakes K613 it already holds, to obtain xK613 used as the reward
+    ///         pool for an external pull-based incentives strategy (e.g. Aave's `PullRewardsTransferStrategy`).
+    event StakedForExternalIncentives(uint256 amount);
+
     /// @notice Deploys the Treasury with K613, xK613, Staking, and RewardsDistributor.
     constructor(address k613Token, address xk613Token, address staking_, address rewardsDistributor_) {
         if (
@@ -73,6 +77,28 @@ contract Treasury is AccessControl, Pausable, ReentrancyGuard {
         xk613 = IERC20(xk613Token);
         staking = Staking(staking_);
         rewardsDistributor = RewardsDistributor(rewardsDistributor_);
+    }
+
+    /// @notice Stakes K613 already held by this contract into Staking, leaving the resulting xK613 on Treasury's
+    ///         balance. Used to fund an external pull-based incentives strategy (e.g. Aave's
+    ///         `PullRewardsTransferStrategy`) without touching `RewardsDistributor.totalDeposits`, so the
+    ///         per-share reward math for buyback rewards is NOT diluted by this xK613 supply.
+    /// @dev    Treasury is whitelisted to hold xK613 and is a `systemStaker` in `Staking`, so the resulting
+    ///         xK613 sits on Treasury's balance and is later pulled by the strategy via `transferFrom`
+    ///         (see `approveXk613PullRewards`). This contrasts with `depositRewards`, which forwards xK613
+    ///         to `RewardsDistributor` and adds to its reward stream.
+    /// @param amount Amount of K613 (already held by Treasury) to stake. Must be non-zero.
+    function stakeForExternalIncentives(uint256 amount)
+        external
+        nonReentrant
+        onlyRole(DEFAULT_ADMIN_ROLE)
+        whenNotPaused
+    {
+        if (amount == 0) revert ZeroAmount();
+        k613.forceApprove(address(staking), amount);
+        staking.stake(amount);
+        k613.forceApprove(address(staking), 0);
+        emit StakedForExternalIncentives(amount);
     }
 
     /// @notice Deposits rewards: stakes K613 to get xK613, sends xK613 to RewardsDistributor and notifies. Caller must have approved Treasury for K613.

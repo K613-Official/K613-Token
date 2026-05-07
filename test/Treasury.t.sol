@@ -132,6 +132,84 @@ contract TreasuryTest is Test {
         treasury.approveXk613PullRewards(address(0xBEEF), type(uint256).max);
     }
 
+    /// @notice testStakeForExternalIncentives_OnlyAdmin: non-admin call reverts.
+    function testStakeForExternalIncentives_OnlyAdmin() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        treasury.stakeForExternalIncentives(100 * ONE);
+    }
+
+    /// @notice testStakeForExternalIncentives_ZeroAmountReverts.
+    function testStakeForExternalIncentives_ZeroAmountReverts() public {
+        vm.expectRevert(Treasury.ZeroAmount.selector);
+        treasury.stakeForExternalIncentives(0);
+    }
+
+    /// @notice testStakeForExternalIncentives_StakesAndKeepsXk613OnTreasury: Treasury K613 -> xK613 1:1, xK613 stays on Treasury.
+    function testStakeForExternalIncentives_StakesAndKeepsXk613OnTreasury() public {
+        // setUp seeded Treasury with 1000 K613.
+        uint256 amount = 500 * ONE;
+        uint256 k613Before = k613.balanceOf(address(treasury));
+        uint256 xk613Before = xk613.balanceOf(address(treasury));
+        uint256 backingBefore = staking.totalBacking();
+
+        treasury.stakeForExternalIncentives(amount);
+
+        assertEq(k613.balanceOf(address(treasury)), k613Before - amount, "K613 consumed by stake");
+        assertEq(xk613.balanceOf(address(treasury)), xk613Before + amount, "xK613 lands on Treasury (NOT RD)");
+        assertEq(staking.totalBacking(), backingBefore + amount, "Staking.totalBacking grows by amount");
+    }
+
+    /// @notice testStakeForExternalIncentives_DoesNotForwardToRewardsDistributor: RD totalDeposits and balance untouched.
+    /// @dev Critical anti-dilution invariant. If this ever fails, real-yield rewards for stakers will be silently shared with the external-incentives reserve.
+    function testStakeForExternalIncentives_DoesNotForwardToRewardsDistributor() public {
+        uint256 rdXk613Before = xk613.balanceOf(address(distributor));
+        uint256 rdTotalDepositsBefore = distributor.totalDeposits();
+        uint256 rdAccBefore = distributor.accRewardPerShare();
+
+        treasury.stakeForExternalIncentives(500 * ONE);
+
+        assertEq(xk613.balanceOf(address(distributor)), rdXk613Before, "RD xK613 balance unchanged");
+        assertEq(distributor.totalDeposits(), rdTotalDepositsBefore, "RD totalDeposits unchanged (no dilution)");
+        assertEq(distributor.accRewardPerShare(), rdAccBefore, "RD accRewardPerShare unchanged");
+    }
+
+    /// @notice testStakeForExternalIncentives_PausedReverts: Treasury paused -> stakeForExternalIncentives reverts.
+    function testStakeForExternalIncentives_PausedReverts() public {
+        treasury.pause();
+        vm.expectRevert();
+        treasury.stakeForExternalIncentives(100 * ONE);
+    }
+
+    /// @notice testStakeForExternalIncentives_EmitsEvent.
+    function testStakeForExternalIncentives_EmitsEvent() public {
+        vm.expectEmit(false, false, false, true, address(treasury));
+        emit Treasury.StakedForExternalIncentives(100 * ONE);
+        treasury.stakeForExternalIncentives(100 * ONE);
+    }
+
+    /// @notice testStakeForExternalIncentives_PullStrategyFlow: end-to-end — after stake + approve, a "strategy" address can transferFrom xK613 from Treasury.
+    /// @dev Mirrors how Aave's PullRewardsTransferStrategy actually claims: `transferFrom(treasury, recipient, amount)`.
+    function testStakeForExternalIncentives_PullStrategyFlow() public {
+        address strategy = address(0x57A47E62);
+        address rewardRecipient = address(0xBE17EF);
+        uint256 stakeAmount = 500 * ONE;
+        uint256 claimAmount = 10 * ONE;
+
+        // strategy needs to be xK613-whitelisted to be a transfer destination/source path
+        xk613.setTransferWhitelist(strategy, true);
+        xk613.setTransferWhitelist(rewardRecipient, true);
+
+        treasury.stakeForExternalIncentives(stakeAmount);
+        treasury.approveXk613PullRewards(strategy, type(uint256).max);
+
+        vm.prank(strategy);
+        xk613.transferFrom(address(treasury), rewardRecipient, claimAmount);
+
+        assertEq(xk613.balanceOf(rewardRecipient), claimAmount, "recipient got xK613 reward");
+        assertEq(xk613.balanceOf(address(treasury)), stakeAmount - claimAmount, "Treasury debited");
+    }
+
     /// @notice testApproveXk613PullRewards_ZeroSpenderReverts: zero spender reverts with ZeroAddress.
     function testApproveXk613PullRewards_ZeroSpenderReverts() public {
         vm.expectRevert(Treasury.ZeroAddress.selector);

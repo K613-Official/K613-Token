@@ -7,7 +7,7 @@ broadcast/
 
 
 # Docs
-
+docs/
 
 # Dotenv file
 .env
@@ -15,3 +15,5 @@ broadcast/
 .claude
 .broadcast
 
+# Distribution example
+script/deploy/distribution.example.json
