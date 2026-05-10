@@ -7,6 +7,7 @@ import {K613S1} from "../src/token/K613S1.sol";
 import {K613SeasonClaim} from "../src/campaign/K613SeasonClaim.sol";
 import {IAccessControl} from "openzeppelin-contracts/contracts/access/IAccessControl.sol";
 import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
+import {IERC20Errors} from "openzeppelin-contracts/contracts/interfaces/draft-IERC6093.sol";
 
 contract K613SeasonClaimTest is Test {
     K613 private k613;
@@ -204,15 +205,19 @@ contract K613SeasonClaimTest is Test {
         claim_.claim(100e18, _proof(bobLeaf));
     }
 
-    /// @notice testInsufficientK613S1Reverts: alice has valid proof but no K613S1 → InsufficientK613S1.
+    /// @notice testInsufficientK613S1Reverts: alice has valid proof but no K613S1 → ERC20InsufficientBalance from K613S1.burnFrom.
     function testInsufficientK613S1Reverts() public {
         // Burn alice's K613S1 (test takes BURNER_ROLE temporarily).
         k613s1.grantRole(k613s1.BURNER_ROLE(), address(this));
         k613s1.burnFrom(alice, aliceAlloc);
 
         vm.warp(tgeTimestamp);
+        uint256 expectedPayout = aliceAlloc * 2_000 / 10_000;
+        bytes memory expectedRevert =
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, alice, 0, expectedPayout);
+
         vm.prank(alice);
-        vm.expectRevert(K613SeasonClaim.InsufficientK613S1.selector);
+        vm.expectRevert(expectedRevert);
         claim_.claim(aliceAlloc, _proof(bobLeaf));
     }
 

@@ -27,13 +27,13 @@ contract K613SeasonClaim is AccessControl, Pausable, ReentrancyGuard {
     error ClaimWindowClosed();
     /// @notice Thrown when `recoverUnclaimedK613` is called before `claimDeadline`.
     error ClaimsStillOpen();
-    /// @notice Thrown when the caller's K613S1 balance is below the K613 payout they are about to receive. The caller must claim K613S1 from `K613S1Distributor` first.
-    error InsufficientK613S1();
 
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     /// @notice Length of the claim window after TGE. After this, claims revert and governance can recover unclaimed K613.
     uint256 public constant CLAIM_WINDOW = 365 days;
+    /// @notice Basis-points denominator used for the vesting schedule (10_000 = 100%).
+    uint256 public constant BPS_DENOMINATOR = 10_000;
 
     /// @notice K613 token paid out to claimers on the vesting schedule.
     IERC20 public immutable k613;
@@ -75,14 +75,14 @@ contract K613SeasonClaim is AccessControl, Pausable, ReentrancyGuard {
         _grantRole(PAUSER_ROLE, _admin);
     }
 
-    /// @notice Returns the vested fraction of an allocation at timestamp `ts`, in basis points (10_000 = 100%). Step schedule: 0% pre-TGE, 20% at TGE, +20% every 15 days, 100% at TGE+60 days.
+    /// @notice Returns the vested fraction of an allocation at timestamp `ts`, in basis points (`BPS_DENOMINATOR` = 100%). Step schedule: 0% pre-TGE, 20% at TGE, +20% every 15 days, 100% at TGE+60 days.
     function vestedFraction(uint256 ts) public view returns (uint256 bps) {
         if (ts < tgeTimestamp) {
             return 0;
         }
         uint256 elapsed = ts - tgeTimestamp;
         if (elapsed >= 60 days) {
-            return 10_000;
+            return BPS_DENOMINATOR;
         }
         if (elapsed >= 45 days) {
             return 8_000;
@@ -97,6 +97,7 @@ contract K613SeasonClaim is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /// @notice Claims the vested portion of caller's allocation. Burns K613S1 1:1 and transfers K613.
+    /// @dev Reverts with `ERC20InsufficientBalance` if the caller has not yet claimed enough K613S1 from `K613S1Distributor` to cover the payout.
     /// @param totalAllocation Total K613 the caller is authorised to receive across the full vesting period.
     /// @param proof Merkle proof for `keccak256(bytes.concat(keccak256(abi.encode(msg.sender, totalAllocation))))` against `merkleRoot`.
     function claim(uint256 totalAllocation, bytes32[] calldata proof) external nonReentrant whenNotPaused {
@@ -109,18 +110,14 @@ contract K613SeasonClaim is AccessControl, Pausable, ReentrancyGuard {
             revert InvalidProof();
         }
 
-        uint256 vested = totalAllocation * vestedFraction(block.timestamp) / 10_000;
+        uint256 vested = totalAllocation * vestedFraction(block.timestamp) / BPS_DENOMINATOR;
         uint256 alreadyPaid = claimed[msg.sender];
         if (vested <= alreadyPaid) {
             revert NothingToClaim();
         }
         uint256 payout = vested - alreadyPaid;
 
-        if (k613s1.balanceOf(msg.sender) < payout) {
-            revert InsufficientK613S1();
-        }
-
-        // CEI: state mutation before external interactions.
+        // CEI: state mutation before any external interactions. K613S1 burnFrom reverts with ERC20InsufficientBalance if the caller has not pre-claimed enough K613S1 from the Distributor.
         claimed[msg.sender] = vested;
         k613s1.burnFrom(msg.sender, payout);
         k613.safeTransfer(msg.sender, payout);
