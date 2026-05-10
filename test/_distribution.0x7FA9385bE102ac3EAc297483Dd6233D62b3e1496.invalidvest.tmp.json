@@ -1,0 +1,1 @@
+{"transferCount":1,"vestingCount":1,"transfers":[{"amount":"90000000000000000000000000","name":"Treasury","to":"0x000000000000000000000000000000000000715A"}],"vestings":[{"amount":"10000000000000000000000000","beneficiary":"0x0000000000000000000000000000000000007ea1","cliffSeconds":"100","durationSeconds":"50","name":"BadCliff","startTimestamp":"1762214400"}]}
