@@ -30,7 +30,7 @@ contract K613S1Distributor is AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     /// @notice Hard upper bound on `weeklyMintCap`. Bounds the worst case even if `DEFAULT_ADMIN_ROLE` is compromised; a malicious admin cannot raise the cap beyond this value to drain the campaign.
-    uint256 public constant MAX_WEEKLY_MINT_CAP = 10_000_000e18;
+    uint256 public constant MAX_WEEKLY_MINT_CAP = 100_000_000e18;
 
     /// @notice K613S1 token minted on claim. The distributor must hold `MINTER_ROLE` on this token.
     K613S1 public immutable k613s1;
