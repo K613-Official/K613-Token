@@ -1,0 +1,66 @@
+{
+  "_README": [
+    "TGE distribution config for K613. Total of 'transfers' + 'vestings' MUST equal 100,000,000 * 1e18.",
+    "All numeric fields are strings (avoids JSON precision issues for 1e26 values).",
+    "Time fields are seconds. OZ VestingWalletCliff: durationSeconds = TOTAL from start (cliff included).",
+    "  Team '6mo cliff + 18mo linear after' = 24mo total → cliffSeconds=15552000, durationSeconds=62208000.",
+    "transferCount/vestingCount MUST match array lengths.",
+    "Replace ALL placeholder addresses (0x...DEAD) with real ones.",
+    "LM-Y1-Treasury 'to' MUST be the Treasury contract address (not a Safe). Governance Safe later calls Treasury.stakeForExternalIncentives(25M) to convert into xK613 reward pool.",
+    "POL-LP 'to' MUST be the same address as the broadcaster of SeedInitialLP (typically GOVERNANCE_SAFE), since SeedInitialLP pulls K613+USDC from broadcaster.",
+    "Public-Sale 'to' MUST be the K613PublicSale contract address (takes the 10% Seed Round bucket from public tokenomics). It must receive the full 10M BEFORE saleStart, or deposit() reverts SaleNotFunded.",
+    "See docs/OPERATIONS_SOP.md for the full TGE flow and sub-step ordering."
+  ],
+  "transferCount": 6,
+  "vestingCount": 2,
+  "transfers": [
+    {
+      "amount": "25000000000000000000000000",
+      "name": "LM-Y1-Treasury",
+      "to": "0x000000000000000000000000000000000000DEAD"
+    },
+    {
+      "amount": "25000000000000000000000000",
+      "name": "LM-Reserve-Multi-Year",
+      "to": "0x000000000000000000000000000000000000DEAD"
+    },
+    {
+      "amount": "5000000000000000000000000",
+      "name": "POL-LP",
+      "to": "0x000000000000000000000000000000000000DEAD"
+    },
+    {
+      "amount": "10000000000000000000000000",
+      "name": "POL-Reserve-Future-LP",
+      "to": "0x000000000000000000000000000000000000DEAD"
+    },
+    {
+      "amount": "10000000000000000000000000",
+      "name": "Treasury-Governance",
+      "to": "0x000000000000000000000000000000000000DEAD"
+    },
+    {
+      "amount": "10000000000000000000000000",
+      "name": "Public-Sale",
+      "to": "0x000000000000000000000000000000000000DEAD"
+    }
+  ],
+  "vestings": [
+    {
+      "amount": "7500000000000000000000000",
+      "beneficiary": "0x000000000000000000000000000000000000DEAD",
+      "cliffSeconds": "15552000",
+      "durationSeconds": "62208000",
+      "name": "Team-Member-Example-1",
+      "startTimestamp": "1762214400"
+    },
+    {
+      "amount": "7500000000000000000000000",
+      "beneficiary": "0x000000000000000000000000000000000000DEAD",
+      "cliffSeconds": "15552000",
+      "durationSeconds": "62208000",
+      "name": "Team-Member-Example-2",
+      "startTimestamp": "1762214400"
+    }
+  ]
+}

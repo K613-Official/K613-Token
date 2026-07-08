@@ -7,9 +7,10 @@ import {K613PublicSale} from "src/sale/K613PublicSale.sol";
 /// @title DeployPublicSale
 /// @notice Deploys `K613PublicSale` on Monad mainnet (chainId 143): the fixed-price overflow public sale of
 ///         10,000,000 K613 at $0.01 against USDC with a $100k hard cap.
-/// @dev Env interface: PRIVATE_KEY, USDC_ADDRESS, K613_ADDRESS, SALE_START, SALE_END; optional SALE_ALLOCATION
-///      (default 10,000,000e18), HARD_CAP (default 100,000e6), SALE_ADMIN (default deployer EOA; production should
-///      pass the governance Safe). Funding the sale with K613 is NOT automated - the contract refuses deposits until
+/// @dev Env interface: PRIVATE_KEY, K613_ADDRESS; optional SALE_ALLOCATION (default 10,000,000e18),
+///      HARD_CAP (default 100,000e6), SALE_ADMIN (default deployer EOA; production should pass the
+///      governance Safe). USDC and the sale window are hardcoded constants below.
+///      Funding the sale with K613 is NOT automated - the contract refuses deposits until
 ///      it holds the full sale allocation, so the transfer must happen before `SALE_START` (see log summary).
 contract DeployPublicSale is Script {
     /// @notice Reverts if invoked on a chain other than Monad mainnet.
@@ -19,6 +20,13 @@ contract DeployPublicSale is Script {
     uint256 private constant DEFAULT_SALE_ALLOCATION = 10_000_000e18; // 10M K613
     uint256 private constant DEFAULT_HARD_CAP = 100_000e6; // $100k USDC
 
+    /// @notice USDC on Monad mainnet (docs/OPERATIONS_SOP.md D.3).
+    address private constant USDC_MONAD = 0x754704Bc059F8C67012fEd69BC8A327a5aafb603;
+    /// @notice Deposit window opens 2026-07-13 00:00:00 UTC.
+    uint256 private constant SALE_START_TS = 1783900800;
+    /// @notice Deposit window closes 2026-07-20 00:00:00 UTC (claims open after finalize()).
+    uint256 private constant SALE_END_TS = 1784505600;
+
     /// @notice Deployed K613PublicSale address. Set by `runWith` so tests can assert without log parsing.
     address public publicSaleAddr;
 
@@ -26,12 +34,12 @@ contract DeployPublicSale is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
         runWith(
-            vm.envAddress("USDC_ADDRESS"),
+            USDC_MONAD,
             vm.envAddress("K613_ADDRESS"),
             vm.envOr("SALE_ALLOCATION", DEFAULT_SALE_ALLOCATION),
             vm.envOr("HARD_CAP", DEFAULT_HARD_CAP),
-            vm.envUint("SALE_START"),
-            vm.envUint("SALE_END"),
+            SALE_START_TS,
+            SALE_END_TS,
             vm.envOr("SALE_ADMIN", vm.addr(pk)),
             pk
         );
