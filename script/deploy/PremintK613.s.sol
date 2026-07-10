@@ -16,9 +16,14 @@ contract PremintK613 is Script {
 
     uint256 private constant MONAD_MAINNET = 143;
 
+    /// @notice K613 on Monad mainnet, deployed 2026-07-10 (see docs/OPERATIONS_SOP.md D.1).
+    address private constant K613_MONAD = 0xb09582631336068d4B0089d943f40CbF46dE5189;
+
     function run() external {
         if (block.chainid != MONAD_MAINNET) revert WrongNetwork(block.chainid);
-        runWith(vm.envAddress("K613_ADDRESS"), vm.envAddress("MINT_RECIPIENT"), vm.envUint("PRIVATE_KEY"));
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        // MINT_RECIPIENT is optional: defaults to the broadcaster EOA (the usual TGE flow).
+        runWith(K613_MONAD, vm.envOr("MINT_RECIPIENT", vm.addr(pk)), pk);
     }
 
     /// @notice Direct entrypoint without env vars. Used by tests to avoid env-race conditions; production uses `run()`.

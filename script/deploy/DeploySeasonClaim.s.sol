@@ -8,9 +8,9 @@ import {K613SeasonClaim} from "src/campaign/K613SeasonClaim.sol";
 /// @notice Deploys `K613SeasonClaim` on Monad mainnet (chainId 143) — the post-TGE conversion of
 ///         K613S1 points into K613 (1:1, step vesting: 20% at TGE + 4 x 20% every 15 days, claims
 ///         burn K613S1). The Merkle root is immutable — a bad root requires a redeploy.
-/// @dev Env interface: PRIVATE_KEY, K613_ADDRESS, FINAL_MERKLE_ROOT (from `pnpm build-season-merkle`
-///      in K613-points); optional SEASON_CLAIM_ADMIN (default deployer EOA; production should pass
-///      the governance Safe). K613S1 and the TGE timestamp are hardcoded constants below.
+/// @dev Env interface: PRIVATE_KEY, FINAL_MERKLE_ROOT (from `pnpm build-season-merkle` in K613-points);
+///      optional SEASON_CLAIM_ADMIN (default deployer EOA; production should pass the governance Safe).
+///      K613, K613S1 and the TGE timestamp are hardcoded constants below.
 ///      After deploy (see log summary):
 ///        1. K613S1.grantRole(BURNER_ROLE, seasonClaim) — claims revert without it;
 ///        2. K613.transfer(seasonClaim, totalK613ToFund) BEFORE TGE_TIMESTAMP.
@@ -22,6 +22,8 @@ contract DeploySeasonClaim is Script {
 
     uint256 private constant MONAD_MAINNET = 143;
 
+    /// @notice K613 on Monad mainnet, deployed 2026-07-10 (see docs/OPERATIONS_SOP.md D.1).
+    address private constant K613_MONAD = 0xb09582631336068d4B0089d943f40CbF46dE5189;
     /// @notice K613S1 points token on Monad mainnet (Season 1 campaign, live since June 2026).
     address private constant K613S1_MONAD = 0x4f9ba5CaE0e3F651821283EC4e303fE8D1dA542a;
     /// @notice Season 1 TGE: 2026-07-20 00:00:00 UTC. Vesting curve is anchored here; must match
@@ -36,7 +38,7 @@ contract DeploySeasonClaim is Script {
         if (TGE_TIMESTAMP <= block.timestamp) revert TgeInPast(TGE_TIMESTAMP, block.timestamp);
 
         uint256 pk = vm.envUint("PRIVATE_KEY");
-        address k613 = vm.envAddress("K613_ADDRESS");
+        address k613 = K613_MONAD;
         bytes32 finalRoot = vm.envBytes32("FINAL_MERKLE_ROOT");
         address admin = vm.envOr("SEASON_CLAIM_ADMIN", vm.addr(pk));
 

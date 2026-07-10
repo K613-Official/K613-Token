@@ -27,9 +27,8 @@ contract DeployK613 is Script {
 
     uint256 private constant MONAD_MAINNET = 143;
 
-    // Monad mainnet tokens, deployed 2026-07-08 (DeployTokensOnly.s.sol), see docs/OPERATIONS_SOP.md D.1
-    K613 private constant K613_TOKEN = K613(0x708dC7ec281015f32f4778CCFad3450e168bCBC1);
-    xK613 private constant XK613_TOKEN = xK613(0xED484CD4DF921deBfff9Da755b9E65f2a10C6a09);
+    K613 private constant K613_TOKEN = K613(0xb09582631336068d4B0089d943f40CbF46dE5189);
+    xK613 private constant XK613_TOKEN = xK613(0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5);
 
     /// @notice Reverts if invoked on a chain other than Monad mainnet.
     error WrongNetwork(uint256 chainId);

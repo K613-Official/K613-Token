@@ -23,12 +23,15 @@ contract DistributeK613 is Script {
 
     uint256 private constant MONAD_MAINNET = 143;
 
+    /// @notice K613 on Monad mainnet, deployed 2026-07-10 (see docs/OPERATIONS_SOP.md D.1).
+    address private constant K613_MONAD = 0xb09582631336068d4B0089d943f40CbF46dE5189;
+
     function run() external {
         if (block.chainid != MONAD_MAINNET) revert WrongNetwork(block.chainid);
         runWith(
-            vm.envAddress("K613_ADDRESS"),
+            K613_MONAD,
             vm.envAddress("VESTING_MANAGER_ADDRESS"),
-            vm.envOr("DISTRIBUTION_CONFIG", string("script/deploy/distribution.example.json")),
+            vm.envOr("DISTRIBUTION_CONFIG", string("script/deploy/distribution.json")),
             vm.envUint("PRIVATE_KEY")
         );
     }
