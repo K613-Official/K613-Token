@@ -12,32 +12,32 @@
     "See docs/OPERATIONS_SOP.md for the full TGE flow and sub-step ordering."
   ],
   "transferCount": 6,
-  "vestingCount": 2,
+  "vestingCount": 4,
   "transfers": [
     {
       "amount": "25000000000000000000000000",
       "name": "LM-Y1-Treasury",
-      "to": "0x000000000000000000000000000000000000DEAD"
+      "to": "0x3377BAB9A510A586627D2f9013e132d269Eb9871"
     },
     {
       "amount": "25000000000000000000000000",
       "name": "LM-Reserve-Multi-Year",
-      "to": "0x000000000000000000000000000000000000DEAD"
+      "to": "0x7D5cF07621228a3D622b4695A1e28991E4620eBB"
     },
     {
       "amount": "5000000000000000000000000",
       "name": "POL-LP",
-      "to": "0x000000000000000000000000000000000000DEAD"
+      "to": "0xF18Fcc2dCDCdc197B036b290BEcBeD692B9d2678"
     },
     {
       "amount": "10000000000000000000000000",
       "name": "POL-Reserve-Future-LP",
-      "to": "0x000000000000000000000000000000000000DEAD"
+      "to": "0x7D5cF07621228a3D622b4695A1e28991E4620eBB"
     },
     {
       "amount": "10000000000000000000000000",
       "name": "Treasury-Governance",
-      "to": "0x000000000000000000000000000000000000DEAD"
+      "to": "0x7D5cF07621228a3D622b4695A1e28991E4620eBB"
     },
     {
       "amount": "10000000000000000000000000",
@@ -47,20 +47,36 @@
   ],
   "vestings": [
     {
-      "amount": "7500000000000000000000000",
-      "beneficiary": "0x000000000000000000000000000000000000DEAD",
+      "amount": "3750000000000000000000000",
+      "beneficiary": "0xdEc4E9F46F9a4F7aF7CcB62C1512b086Fa054829",
       "cliffSeconds": "15552000",
       "durationSeconds": "62208000",
-      "name": "Team-Member-Example-1",
-      "startTimestamp": "1762214400"
+      "name": "Team-Member-1",
+      "startTimestamp": "1784505600"
     },
     {
-      "amount": "7500000000000000000000000",
-      "beneficiary": "0x000000000000000000000000000000000000DEAD",
+      "amount": "3750000000000000000000000",
+      "beneficiary": "0xF18Fcc2dCDCdc197B036b290BEcBeD692B9d2678",
       "cliffSeconds": "15552000",
       "durationSeconds": "62208000",
-      "name": "Team-Member-Example-2",
-      "startTimestamp": "1762214400"
+      "name": "Team-Member-2",
+      "startTimestamp": "1784505600"
+    },
+    {
+      "amount": "3750000000000000000000000",
+      "beneficiary": "0xaa0a6995f210c1A47593D88577413d1C19167984",
+      "cliffSeconds": "15552000",
+      "durationSeconds": "62208000",
+      "name": "Team-Member-3",
+      "startTimestamp": "1784505600"
+    },
+    {
+      "amount": "3750000000000000000000000",
+      "beneficiary": "0xdEc4E9F46F9a4F7aF7CcB62C1512b086Fa054829",
+      "cliffSeconds": "15552000",
+      "durationSeconds": "62208000",
+      "name": "Team-Member-4",
+      "startTimestamp": "1784505600"
     }
   ]
 }

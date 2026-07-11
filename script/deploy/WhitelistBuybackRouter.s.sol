@@ -8,8 +8,8 @@ import {Treasury} from "src/treasury/Treasury.sol";
 /// @notice Adds Uniswap V3 SwapRouter02 (Monad mainnet) to the Treasury buyback router whitelist.
 ///         Without this, `Treasury.buybackV3ExactInputSingle` reverts with `RouterNotWhitelisted`.
 ///         Can be run at any time after the Treasury is deployed; must be run before the first buyback.
-/// @dev Env interface: PRIVATE_KEY (must hold DEFAULT_ADMIN_ROLE on the Treasury), TREASURY_ADDRESS.
-///      The router is a hardcoded constant below. Idempotent: re-running is a no-op on-chain state.
+/// @dev Env interface: PRIVATE_KEY (must hold DEFAULT_ADMIN_ROLE on the Treasury).
+///      The router and Treasury are hardcoded constants below. Idempotent: re-running is a no-op on-chain state.
 contract WhitelistBuybackRouter is Script {
     /// @notice Reverts if invoked on a chain other than Monad mainnet.
     error WrongNetwork(uint256 chainId);
@@ -20,13 +20,15 @@ contract WhitelistBuybackRouter is Script {
 
     /// @notice Uniswap V3 SwapRouter02 on Monad mainnet (see docs/OPERATIONS_SOP.md D.3).
     address private constant SWAP_ROUTER_02 = 0xfE31F71C1b106EAc32F1A19239c9a9A72ddfb900;
+    /// @notice Treasury on Monad mainnet, deployed 2026-07-11 (see docs/OPERATIONS_SOP.md D.1).
+    address private constant TREASURY_MONAD = 0x3377BAB9A510A586627D2f9013e132d269Eb9871;
 
     function run() external {
         if (block.chainid != MONAD_MAINNET) revert WrongNetwork(block.chainid);
 
         uint256 pk = vm.envUint("PRIVATE_KEY");
         address broadcaster = vm.addr(pk);
-        Treasury treasury = Treasury(vm.envAddress("TREASURY_ADDRESS"));
+        Treasury treasury = Treasury(TREASURY_MONAD);
 
         if (!treasury.hasRole(treasury.DEFAULT_ADMIN_ROLE(), broadcaster)) {
             revert BroadcasterNotTreasuryAdmin(broadcaster);
