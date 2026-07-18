@@ -4,9 +4,38 @@
   <img src="image/image.png" alt="K613 logo" width="200" />
 </p>
 
-This repository contains the K613 protocol smart contracts: the base token `K613`, the staking receipt token `xK613`, the staking contract with an exit queue, the rewards distributor, and the treasury that manages buybacks and topping up the rewards pool.
+This repository contains the K613 protocol smart contracts: the base token `K613`, the staking receipt token `xK613`, the staking contract with an exit queue, the rewards distributor, the treasury that manages buybacks and topping up the rewards pool, the public sale, team vesting, and the Season 1 points campaign (points token, weekly distributor, and post-TGE conversion into K613).
 
 The protocol is inspired by the Shadow (`xSHADOW`) model: users deposit the base token, receive a 1:1 receipt token, and exit from staking goes through a queue with an optional early exit penalty. Rewards are paid in the same receipt token and depend on the user’s share in the pool.
+
+---
+
+### Security & Audit
+
+- The core protocol contracts (`K613`, `xK613`, `Staking`, `RewardsDistributor`, `Treasury`) were audited by **Hashlock**. The final report (v3) is available in [`audit/`](audit/K613-Smart-Contract-Audit-Report-Final-Report-v3.pdf).
+- Contracts added after the audit window (public sale, vesting, points campaign) follow the same standards: OpenZeppelin `AccessControl` / `Pausable` / `ReentrancyGuard`, `SafeERC20`, checks-effects-interactions.
+- All deployed mainnet contracts are **source-verified** (Sourcify exact match) — see the address table below.
+- Every user-facing contract supports `pause` for incident response, and privileged operations are role-gated.
+
+If you believe you have found a security issue, please contact the team privately before any public disclosure.
+
+---
+
+### Deployed Contracts (Monad mainnet, chainId 143)
+
+| Contract | Address |
+|---|---|
+| K613 | `0xb09582631336068d4B0089d943f40CbF46dE5189` |
+| xK613 | `0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5` |
+| Staking | `0x36451F6b4c06916aafd16359CCf99eB1f584DB0b` |
+| RewardsDistributor | `0xE3E8925E8554464611c86419B9e99AD7Cd47428f` |
+| Treasury | `0x3377BAB9A510A586627D2f9013e132d269Eb9871` |
+| K613PublicSale | `0xb83D0BEDE1C294B73c82ea0816E61E407775c7c2` |
+| K613VestingManager | `0xcb521f8e2441c13F7e79205b0bC5011e0cdd7aa9` |
+| K613S1 (points) | `0x4f9ba5CaE0e3F651821283EC4e303fE8D1dA542a` |
+| K613S1Distributor | `0x94F71Da72c6CE71c570CF7F8e076F3097E411063` |
+
+Tokenomics (allocation, vesting schedules, emissions) is documented at [docs.k613.net](https://docs.k613.net/k613-tokenomics).
 
 ---
 
@@ -53,6 +82,23 @@ Contract that distributes rewards based on `xK613` deposits:
 - safety for exiting stakers:
   - while a user has active exit requests in `Staking` (`exitQueueLength > 0`), `claim()` in `RewardsDistributor` reverts with `ExitVestingActive`;
   - so users cannot withdraw stake and claim rewards at the same time until the exit queue is completed or cancelled.
+
+**`K613PublicSale` (src/sale/K613PublicSale.sol)**  
+Fixed-price overflow public sale (10,000,000 K613 at $0.01 against USDC, $100k hard cap):
+- deposits are accepted only inside the `[saleStart, saleEnd)` window and only once the contract holds the full sale allocation (`SaleNotFunded` otherwise);
+- if total deposits exceed the hard cap, allocations are pro-rata and the unused part of each deposit is claimable back via `claimRefund` — the effective price never changes;
+- after `finalize()` buyers claim 100% of their allocation with `claimTokens` (no vesting), claims stay open for `CLAIM_WINDOW` (365 days);
+- admin can withdraw proceeds once (`withdrawProceeds`), sweep unsold tokens (`sweepUnsoldTokens`), and recover leftovers after the claim deadline.
+
+**`K613VestingManager` / `K613VestingWallet` (src/vesting/)**  
+Team vesting via OpenZeppelin `VestingWalletCliff`:
+- the manager deploys one immutable vesting wallet per allocation and indexes wallets by beneficiary (`getWalletsByBeneficiary`);
+- production schedule: 6-month cliff, then linear vesting until month 24; beneficiaries call `release(token)` on their own wallet.
+
+**`K613S1` / `K613S1Distributor` / `K613SeasonClaim` (src/token/K613S1.sol, src/campaign/)**  
+Season 1 points campaign:
+- `K613S1` is a non-transferable points ERC-20 minted weekly by the distributor from Merkle roots (cumulative claims);
+- `K613SeasonClaim` opens at TGE: it burns `K613S1` 1:1 and pays out K613 on a step-vesting schedule (20% at TGE + 4 × 20% every 15 days), funded by governance, with a 365-day claim window.
 
 **`Treasury` (src/treasury/Treasury.sol)**  
 Protocol treasury managing `K613` flows:

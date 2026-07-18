@@ -8,9 +8,8 @@ import {K613SeasonClaim} from "src/campaign/K613SeasonClaim.sol";
 /// @notice Deploys `K613SeasonClaim` on Monad mainnet (chainId 143) — the post-TGE conversion of
 ///         K613S1 points into K613 (1:1, step vesting: 20% at TGE + 4 x 20% every 15 days, claims
 ///         burn K613S1). The Merkle root is immutable — a bad root requires a redeploy.
-/// @dev Env interface: PRIVATE_KEY, FINAL_MERKLE_ROOT (from `pnpm build-season-merkle` in K613-points);
-///      optional SEASON_CLAIM_ADMIN (default deployer EOA; production should pass the governance Safe).
-///      K613, K613S1 and the TGE timestamp are hardcoded constants below.
+/// @dev Env interface: PRIVATE_KEY only. K613, K613S1, the TGE timestamp, the final Merkle root and
+///      the admin (governance Safe) are hardcoded constants below.
 ///      After deploy (see log summary):
 ///        1. K613S1.grantRole(BURNER_ROLE, seasonClaim) — claims revert without it;
 ///        2. K613.transfer(seasonClaim, totalK613ToFund) BEFORE TGE_TIMESTAMP.
@@ -29,6 +28,12 @@ contract DeploySeasonClaim is Script {
     /// @notice Season 1 TGE: 2026-07-20 00:00:00 UTC. Vesting curve is anchored here; must match
     ///         the --tge-date used in build-season-merkle.
     uint256 private constant TGE_TIMESTAMP = 1784505600;
+    /// @notice Final Season 1 Merkle root (275 holders, totalK613ToFund = 429,198.33 K613) from
+    ///         K613-points snapshots/season-final-mainnet (commit 2862c4a4).
+    bytes32 private constant FINAL_MERKLE_ROOT = 0x986ad9b1823fd92cc93e52d6a46f29c3f6e076b20b7df006f4c04a77f2a8063a;
+    /// @notice Governance Safe (2-of-3) — receives DEFAULT_ADMIN_ROLE + PAUSER_ROLE on the claim
+    ///         contract (can pause and recover unclaimed K613 after the 365-day deadline).
+    address private constant GOVERNANCE_SAFE = 0x7D5cF07621228a3D622b4695A1e28991E4620eBB;
 
     /// @notice Deployed K613SeasonClaim address. Set by `run` so tests can assert without log parsing.
     address public seasonClaimAddr;
@@ -39,8 +44,8 @@ contract DeploySeasonClaim is Script {
 
         uint256 pk = vm.envUint("PRIVATE_KEY");
         address k613 = K613_MONAD;
-        bytes32 finalRoot = vm.envBytes32("FINAL_MERKLE_ROOT");
-        address admin = vm.envOr("SEASON_CLAIM_ADMIN", vm.addr(pk));
+        bytes32 finalRoot = FINAL_MERKLE_ROOT;
+        address admin = GOVERNANCE_SAFE;
 
         console.log("Deployer:", vm.addr(pk));
         console.log("K613:    ", k613);

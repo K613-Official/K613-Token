@@ -72,19 +72,29 @@ contract SeedInitialLP is Script {
 
     uint256 private constant MONAD_MAINNET = 143;
 
+    // Monad mainnet constants (docs/OPERATIONS_SOP.md D.1/D.3).
+    address private constant K613_MONAD = 0xb09582631336068d4B0089d943f40CbF46dE5189;
+    address private constant USDC_MONAD = 0x754704Bc059F8C67012fEd69BC8A327a5aafb603;
+    address private constant NPM_MONAD = 0x7197E214c0b767cFB76Fb734ab638E2c192F4E53;
+    /// @notice Default pool fee tier: 0.3%.
+    uint24 private constant DEFAULT_FEE_TIER = 3000;
+    /// @notice Default initial price: $0.01 per K613 (raw 6-decimal USDC), parity with the public sale.
+    uint256 private constant DEFAULT_PRICE_K613_USDC_RAW = 10_000;
+
     function run() external {
         if (block.chainid != MONAD_MAINNET) revert WrongNetwork(block.chainid);
+        uint256 pk = vm.envUint("PRIVATE_KEY");
         runWithPrice(
-            vm.envAddress("K613_ADDRESS"),
-            vm.envAddress("USDC_ADDRESS"),
-            vm.envAddress("NPM_ADDRESS"),
-            uint24(vm.envUint("FEE_TIER")),
-            vm.envUint("PRICE_K613_USDC_RAW"),
+            K613_MONAD,
+            USDC_MONAD,
+            NPM_MONAD,
+            uint24(vm.envOr("FEE_TIER", uint256(DEFAULT_FEE_TIER))),
+            vm.envOr("PRICE_K613_USDC_RAW", DEFAULT_PRICE_K613_USDC_RAW),
             vm.envUint("K613_AMOUNT"),
             vm.envUint("USDC_AMOUNT"),
             uint16(vm.envOr("SLIPPAGE_BPS", uint256(DEFAULT_SLIPPAGE_BPS))),
-            vm.envAddress("LP_RECIPIENT"),
-            vm.envUint("PRIVATE_KEY")
+            vm.envOr("LP_RECIPIENT", vm.addr(pk)),
+            pk
         );
     }
 
