@@ -4,34 +4,7 @@ pragma solidity 0.8.34;
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {Math} from "openzeppelin-contracts/contracts/utils/math/Math.sol";
-
-/// @notice Minimal interface for Uniswap V3 NonfungiblePositionManager (NPM).
-/// @dev Only the two methods we actually call: pool creation+init and mint.
-interface INonfungiblePositionManager {
-    struct MintParams {
-        address token0;
-        address token1;
-        uint24 fee;
-        int24 tickLower;
-        int24 tickUpper;
-        uint256 amount0Desired;
-        uint256 amount1Desired;
-        uint256 amount0Min;
-        uint256 amount1Min;
-        address recipient;
-        uint256 deadline;
-    }
-
-    function createAndInitializePoolIfNecessary(address token0, address token1, uint24 fee, uint160 sqrtPriceX96)
-        external
-        payable
-        returns (address pool);
-
-    function mint(MintParams calldata params)
-        external
-        payable
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
-}
+import {INonfungiblePositionManager} from "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
 
 /// @title SeedInitialLP
 /// @notice Creates the K613/USDC pool on Uniswap V3 (Monad), initializes its price, and mints a full-range LP position.
@@ -80,6 +53,10 @@ contract SeedInitialLP is Script {
     uint24 private constant DEFAULT_FEE_TIER = 3000;
     /// @notice Default initial price: $0.01 per K613 (raw 6-decimal USDC), parity with the public sale.
     uint256 private constant DEFAULT_PRICE_K613_USDC_RAW = 10_000;
+    /// @notice Full public-sale proceeds ($792.636970) — "all funds go to LP" per tokenomics.
+    uint256 private constant DEFAULT_USDC_AMOUNT = 792_636_970;
+    /// @notice K613 side matching the proceeds at $0.01 (79,263.697 K613, from the POL-LP bucket).
+    uint256 private constant DEFAULT_K613_AMOUNT = 79_263_697e15;
 
     function run() external {
         if (block.chainid != MONAD_MAINNET) revert WrongNetwork(block.chainid);
@@ -90,8 +67,8 @@ contract SeedInitialLP is Script {
             NPM_MONAD,
             uint24(vm.envOr("FEE_TIER", uint256(DEFAULT_FEE_TIER))),
             vm.envOr("PRICE_K613_USDC_RAW", DEFAULT_PRICE_K613_USDC_RAW),
-            vm.envUint("K613_AMOUNT"),
-            vm.envUint("USDC_AMOUNT"),
+            vm.envOr("K613_AMOUNT", DEFAULT_K613_AMOUNT),
+            vm.envOr("USDC_AMOUNT", DEFAULT_USDC_AMOUNT),
             uint16(vm.envOr("SLIPPAGE_BPS", uint256(DEFAULT_SLIPPAGE_BPS))),
             vm.envOr("LP_RECIPIENT", vm.addr(pk)),
             pk

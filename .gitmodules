@@ -16,3 +16,10 @@
 [submodule "lib/k613-markets-config"]
 	path = lib/k613-markets-config
 	url = https://github.com/K613-Official/k613-markets-config
+[submodule "lib/v3-periphery"]
+	path = lib/v3-periphery
+	url = https://github.com/Uniswap/v3-periphery
+	branch = 0.8
+[submodule "lib/oz34"]
+	path = lib/oz34
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts

@@ -8,8 +8,14 @@
       "rev": "1801b0541f4fda118a10798fd3486bb7051c5dd6"
     }
   },
+  "lib/k613-markets-config": {
+    "rev": "f1a977100c5df7959a3b78eb693308b78b92bf82"
+  },
   "lib/openzeppelin-contracts": {
     "rev": "acd4ff74de833399287ed6b31b4debf6b2b35527"
+  },
+  "lib/oz34": {
+    "rev": "dd1d7df0c9eea1b8abe15ef2ea940325431ee224"
   },
   "lib/swap-router-contracts": {
     "tag": {
@@ -22,5 +28,8 @@
       "name": "v1.0.0",
       "rev": "e3589b192d0be27e100cd0daaf6c97204fdb1899"
     }
+  },
+  "lib/v3-periphery": {
+    "rev": "b325bb0905d922ae61fcc7df85ee802e8df5e96c"
   }
 }

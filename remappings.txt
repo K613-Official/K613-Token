@@ -1,3 +1,5 @@
 @uniswap/v3-core/=lib/v3-core/
 openzeppelin-contracts/=lib/openzeppelin-contracts/
 swap-router-contracts/=lib/swap-router-contracts/
+@uniswap/v3-periphery/=lib/v3-periphery/
+lib/v3-periphery/:@openzeppelin/=lib/openzeppelin-contracts/
