@@ -13,7 +13,8 @@ import {ICollector} from "lib/K613-Protocol/src/contracts/treasury/ICollector.so
 ///         1. Pool.mintToTreasury(assets) — materializes accruedToTreasury as aTokens on the Collector;
 ///         2. Collector.transfer(aToken, FEE_RECIPIENT, full balance) for every asset with a non-zero balance;
 ///         3. optionally (DO_WITHDRAW=true, only when FEE_RECIPIENT is the broadcaster EOA)
-///            Pool.withdraw(asset, max) — redeems aTokens into underlying on the recipient.
+///            Pool.withdraw(asset, transferred amount) — redeems exactly the collected aTokens into
+///            underlying on the recipient (personal aToken balances/collateral are never touched).
 /// @dev Env:
 ///      FEE_RECIPIENT  optional: where aTokens go (default: broadcaster EOA)
 ///      DO_WITHDRAW    optional bool, default true (unwrap into underlying for the swap step)
@@ -81,7 +82,10 @@ contract CollectProtocolFees is Script {
             console.log("transferred:", aToken, bal);
 
             if (doWithdraw) {
-                uint256 out = POOL.withdraw(assets[i], type(uint256).max, recipient);
+                // Withdraw ONLY what was just transferred from the Collector — never type(uint256).max:
+                // the broadcaster EOA may hold a personal lending position, and draining its entire
+                // aToken balance would pull personal collateral and can break its health factor (Aave #35).
+                uint256 out = POOL.withdraw(assets[i], bal, recipient);
                 console.log("withdrawn  :", assets[i], out);
             }
         }
