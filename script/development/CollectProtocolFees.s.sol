@@ -10,7 +10,10 @@ import {ICollector} from "lib/K613-Protocol/src/contracts/treasury/ICollector.so
 
 /// @title CollectProtocolFees
 /// @notice One-shot fee collection for all reserves on Monad mainnet:
-///         1. Pool.mintToTreasury(assets) — materializes accruedToTreasury as aTokens on the Collector;
+///         PREREQUISITE: run MintFeesToTreasury.s.sol first (separate broadcast!) — this script
+///         computes transfer amounts from live Collector balances at simulation time, so the mint
+///         must already be mined; bundling them in one batch made every transfer overshoot when the
+///         mint tx failed (2026-07-29 incident).
 ///         2. Collector.transfer(aToken, FEE_RECIPIENT, full balance) for every asset with a non-zero balance;
 ///         3. optionally (DO_WITHDRAW=true, only when FEE_RECIPIENT is the broadcaster EOA)
 ///            Pool.withdraw(asset, transferred amount) — redeems exactly the collected aTokens into
@@ -68,8 +71,6 @@ contract CollectProtocolFees is Script {
         console.log("Recipient :", recipient);
 
         vm.startBroadcast(pk);
-
-        POOL.mintToTreasury(assets);
 
         for (uint256 i = 0; i < assets.length; ++i) {
             (address aToken,,) = DATA_PROVIDER.getReserveTokensAddresses(assets[i]);
