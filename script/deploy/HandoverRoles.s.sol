@@ -22,16 +22,19 @@ contract HandoverRoles is Script {
 
     uint256 private constant MONAD_MAINNET = 143;
 
+    // Monad mainnet, see docs/OPERATIONS_SOP.md D.1
+    address private constant K613_MONAD = 0xb09582631336068d4B0089d943f40CbF46dE5189;
+    address private constant XK613_MONAD = 0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5;
+    address private constant STAKING_MONAD = 0x36451F6b4c06916aafd16359CCf99eB1f584DB0b;
+    address private constant RD_MONAD = 0xE3E8925E8554464611c86419B9e99AD7Cd47428f;
+    address private constant TREASURY_MONAD = 0x3377BAB9A510A586627D2f9013e132d269Eb9871;
+    /// @notice Governance Safe (2-of-3).
+    address private constant GOVERNANCE_SAFE = 0x7D5cF07621228a3D622b4695A1e28991E4620eBB;
+
     function run() external {
         if (block.chainid != MONAD_MAINNET) revert WrongNetwork(block.chainid);
         runWith(
-            vm.envAddress("K613_ADDRESS"),
-            vm.envAddress("XK613_ADDRESS"),
-            vm.envAddress("STAKING_ADDRESS"),
-            vm.envAddress("REWARDS_DISTRIBUTOR_ADDRESS"),
-            vm.envAddress("TREASURY_ADDRESS"),
-            vm.envAddress("GOV_SAFE"),
-            vm.envUint("PRIVATE_KEY")
+            K613_MONAD, XK613_MONAD, STAKING_MONAD, RD_MONAD, TREASURY_MONAD, GOVERNANCE_SAFE, vm.envUint("PRIVATE_KEY")
         );
     }
 

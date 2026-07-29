@@ -49,14 +49,14 @@ contract SeedInitialLP is Script {
     address private constant K613_MONAD = 0xb09582631336068d4B0089d943f40CbF46dE5189;
     address private constant USDC_MONAD = 0x754704Bc059F8C67012fEd69BC8A327a5aafb603;
     address private constant NPM_MONAD = 0x7197E214c0b767cFB76Fb734ab638E2c192F4E53;
-    /// @notice Default pool fee tier: 0.3%.
-    uint24 private constant DEFAULT_FEE_TIER = 3000;
-    /// @notice Default initial price: $0.01 per K613 (raw 6-decimal USDC), parity with the public sale.
-    uint256 private constant DEFAULT_PRICE_K613_USDC_RAW = 10_000;
+    /// @notice Pool fee tier 0.05% — the 0.3% K613/USDC pool is a dead artifact initialized at $0.01.
+    uint24 private constant DEFAULT_FEE_TIER = 500;
+    /// @notice Initial price: $0.008 per K613 (raw 6-decimal USDC) — final team decision, POL listing price.
+    uint256 private constant DEFAULT_PRICE_K613_USDC_RAW = 8_000;
     /// @notice Full public-sale proceeds ($792.636970) — "all funds go to LP" per tokenomics.
     uint256 private constant DEFAULT_USDC_AMOUNT = 792_636_970;
-    /// @notice K613 side matching the proceeds at $0.01 (79,263.697 K613, from the POL-LP bucket).
-    uint256 private constant DEFAULT_K613_AMOUNT = 79_263_697e15;
+    /// @notice K613 side matching the proceeds at $0.008 (99,079.62125 K613, from the POL-LP bucket).
+    uint256 private constant DEFAULT_K613_AMOUNT = 99_079_621_250e12;
 
     function run() external {
         if (block.chainid != MONAD_MAINNET) revert WrongNetwork(block.chainid);
