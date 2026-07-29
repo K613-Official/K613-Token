@@ -15,8 +15,8 @@ import {ICollector} from "lib/K613-Protocol/src/contracts/treasury/ICollector.so
 ///         3. optionally (DO_WITHDRAW=true, only when FEE_RECIPIENT is the broadcaster EOA)
 ///            Pool.withdraw(asset, max) — redeems aTokens into underlying on the recipient.
 /// @dev Env:
-///      FEE_RECIPIENT  where aTokens go (multisig or EOA)
-///      DO_WITHDRAW    optional bool, default false
+///      FEE_RECIPIENT  optional: where aTokens go (default: broadcaster EOA)
+///      DO_WITHDRAW    optional bool, default true (unwrap into underlying for the swap step)
 ///      PRIVATE_KEY    must hold FUNDS_ADMIN on the Collector
 contract CollectProtocolFees is Script {
     // Monad mainnet, see docs/OPERATIONS_SOP.md D.2/D.5
@@ -52,10 +52,12 @@ contract CollectProtocolFees is Script {
     }
 
     function run() external {
-        address recipient = vm.envAddress("FEE_RECIPIENT");
-        bool doWithdraw = vm.envOr("DO_WITHDRAW", false);
         uint256 pk = vm.envUint("PRIVATE_KEY");
         address broadcaster = vm.addr(pk);
+        // Defaults tuned for the monthly fee cycle: collect to the broadcaster and unwrap aTokens
+        // into underlying right away (SwapCollectedToUsdc needs raw assets, not aTokens).
+        address recipient = vm.envOr("FEE_RECIPIENT", broadcaster);
+        bool doWithdraw = vm.envOr("DO_WITHDRAW", true);
 
         if (doWithdraw && recipient != broadcaster) {
             revert("CollectProtocolFees: DO_WITHDRAW requires FEE_RECIPIENT == broadcaster (aToken holder redeems)");

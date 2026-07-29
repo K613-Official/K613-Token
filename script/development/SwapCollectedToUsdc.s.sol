@@ -26,10 +26,11 @@ contract SwapCollectedToUsdc is Script {
     uint256 private constant MONAD_MAINNET = 143;
     uint256 private constant DEFAULT_SLIPPAGE_BPS = 100; // 1%
 
-    // Monad mainnet (docs/OPERATIONS_SOP.md D.3/D.5)
+    // Monad mainnet (docs/OPERATIONS_SOP.md D.1/D.3/D.5)
     address private constant SWAP_ROUTER_02 = 0xfE31F71C1b106EAc32F1A19239c9a9A72ddfb900;
     address private constant QUOTER_V2 = 0x661E93cca42AfacB172121EF892830cA3b70F08d;
     address private constant USDC = 0x754704Bc059F8C67012fEd69BC8A327a5aafb603;
+    address private constant TREASURY = 0x3377BAB9A510A586627D2f9013e132d269Eb9871;
 
     struct Route {
         address token;
@@ -98,15 +99,20 @@ contract SwapCollectedToUsdc is Script {
             console.log("swapped", r.symbol, bal, out);
         }
 
+        // Forward exactly the freshly swapped USDC to the Treasury — the wallet's pre-existing
+        // USDC balance is untouched. Override with SEND_TO_TREASURY=false to keep it on the wallet.
+        uint256 gained = IERC20(USDC).balanceOf(wallet) - usdcBefore;
+        bool sendToTreasury = vm.envOr("SEND_TO_TREASURY", true);
+        if (sendToTreasury && gained > 0) {
+            IERC20(USDC).safeTransfer(TREASURY, gained);
+            console.log("USDC sent to Treasury:", gained);
+        }
+
         vm.stopBroadcast();
 
-        uint256 usdcAfter = IERC20(USDC).balanceOf(wallet);
         console.log("");
-        console.log("USDC before:", usdcBefore);
-        console.log("USDC after: ", usdcAfter);
-        console.log("USDC gained:", usdcAfter - usdcBefore);
-        console.log("");
+        console.log("USDC gained from swaps:", gained);
         console.log("NOT swapped (no V3 pools): shMON / sMON / gMON / wsrUSD - hold or swap on Kuru manually.");
-        console.log("Next step: transfer USDC to Treasury and run TreasuryBuybackV3.s.sol (POOL_FEE=3000).");
+        console.log("Next step: run TreasuryBuybackV3.s.sol");
     }
 }
