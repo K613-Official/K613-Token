@@ -18,8 +18,18 @@
 # ============================================================================
 set -u
 
-RPC="${MONAD_RPC:?set MONAD_RPC}"
-PK="${PRIVATE_KEY:?set PRIVATE_KEY}"
+# Auto-load .env from the repo root (works no matter where the script is run from):
+# `source .env` in the parent shell does NOT export vars to child processes.
+ENV_FILE="$(cd "$(dirname "$0")/../.." && pwd)/.env"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+
+RPC="${MONAD_RPC:?set MONAD_RPC (or put it in .env)}"
+PK="${PRIVATE_KEY:?set PRIVATE_KEY (or put it in .env)}"
 SLIPPAGE_BPS="${SLIPPAGE_BPS:-100}"
 ME=$(cast wallet address "$PK")
 
@@ -73,6 +83,15 @@ quote() { # quote <tokenIn> <tokenOut> <amount> <fee> -> stdout amountOut (empty
 echo "=== K613 monthly fee cycle ==="
 echo "operator: $ME"
 echo "slippage: ${SLIPPAGE_BPS} bps"
+
+# Preflight: collect (Collector.transfer) needs FUNDS_ADMIN, buyback needs Treasury admin.
+FUNDS_ADMIN_ROLE=0x46554e44535f41444d494e000000000000000000000000000000000000000000
+IS_FA=$(cast call "$COLLECTOR" "hasRole(bytes32,address)(bool)" "$FUNDS_ADMIN_ROLE" "$ME" --rpc-url "$RPC" | awk '{print $1}')
+if [ "$IS_FA" != "true" ]; then
+  echo
+  echo "ABORT: $ME does not hold FUNDS_ADMIN on the Collector — run this with the funds-admin key."
+  exit 1
+fi
 
 # ── Step 0: materialize accruedToTreasury on the Collector ──────────────────
 say "0. Pool.mintToTreasury (11 reserves)"
