@@ -118,6 +118,17 @@ for entry in "${ASSETS[@]}"; do
 
   Q=$(quote "$UNDER" "$USDC" "$AMT" "$FEE")
   if [ -z "$Q" ] || [ "$Q" = "0" ]; then echo "  hold $SYM (no quote)"; continue; fi
+  # Stablecoin sanity floor: a stable/USDC quote below 95% of face value means the pool is
+  # broken/empty (2026-07-30: 7.8 AUSD sold for $0.07 into a drained pool). Hold instead.
+  case "$SYM" in
+    AUSD|USDT0)
+      FLOOR=$(python3 -c "print($AMT*9500//10000)")
+      if [ "$(python3 -c "print(1 if $Q < $FLOOR else 0)")" = "1" ]; then
+        echo "  hold $SYM (quote $Q < 95% of face value - pool unhealthy)"
+        continue
+      fi
+      ;;
+  esac
   MINOUT=$(python3 -c "print($Q*(10000-$SLIPPAGE_BPS)//10000)")
 
   send "approve  $SYM" "$UNDER" "approve(address,uint256)" "$ROUTER" "$AMT" || continue
