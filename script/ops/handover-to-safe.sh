@@ -52,12 +52,19 @@ if [ "$ME" != "0xF18Fcc2dCDCdc197B036b290BEcBeD692B9d2678" ]; then
 fi
 
 say "A. Core five (K613, xK613, Staking, RewardsDistributor, Treasury)"
-if forge script script/deploy/HandoverRoles.s.sol --rpc-url "$RPC" --private-key "$PK" --broadcast -g 300 >/dev/null 2>&1; then
-  echo "  OK   HandoverRoles (grant Safe + revoke EOA on all five)"
-else
-  echo "  FAIL HandoverRoles - inspect: forge script script/deploy/HandoverRoles.s.sol --rpc-url \$MONAD_RPC --private-key \$PRIVATE_KEY"
-  FAILS=$((FAILS+1))
-fi
+# Sequential cast sends (forge batching underestimates gas on Monad).
+# Order per contract: grant Safe first, renounce EOA last.
+for entry in "K613:$K613" "xK613:$XK613" "Staking:$STAKING" "RewardsDistributor:$RD" "Treasury:$TREASURY"; do
+  IFS=: read -r NAME ADDR <<<"$entry"
+  send "$NAME: grant admin  -> Safe" "$ADDR" "grantRole(bytes32,address)" "$ADMIN" "$SAFE" || continue
+  send "$NAME: grant pauser -> Safe" "$ADDR" "grantRole(bytes32,address)" "$PAUSER" "$SAFE"
+  if [ "$NAME" = "K613" ]; then
+    # rotate the minter role to the Safe as well (atomic revoke+grant inside setMinter)
+    send "$NAME: setMinter -> Safe" "$ADDR" "setMinter(address)" "$SAFE"
+  fi
+  send "$NAME: renounce pauser (EOA)" "$ADDR" "renounceRole(bytes32,address)" "$PAUSER" "$ME"
+  send "$NAME: renounce admin (EOA)" "$ADDR" "renounceRole(bytes32,address)" "$ADMIN" "$ME"
+done
 
 say "B. Sale: sweep unsold K613, community payouts, remainder -> Safe, roles"
 # Sweep lands on the operator first so the community payouts below can be paid,
