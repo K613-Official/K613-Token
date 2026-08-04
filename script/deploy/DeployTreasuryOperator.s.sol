@@ -36,9 +36,8 @@ contract DeployTreasuryOperator is Script {
         address operator = vm.envOr("OPERATOR_ADDRESS", vm.addr(pk));
 
         vm.startBroadcast(pk);
-        K613TreasuryOperator op = new K613TreasuryOperator(
-            GOVERNANCE_SAFE, operator, TRANCHE_CAP, BUYBACK_CAP, PRICE_FEED, MAX_SLIPPAGE_BPS
-        );
+        K613TreasuryOperator op =
+            new K613TreasuryOperator(GOVERNANCE_SAFE, operator, TRANCHE_CAP, BUYBACK_CAP, PRICE_FEED, MAX_SLIPPAGE_BPS);
         vm.stopBroadcast();
 
         require(op.hasRole(op.DEFAULT_ADMIN_ROLE(), GOVERNANCE_SAFE), "safe is not admin");

@@ -91,7 +91,9 @@ contract K613TreasuryOperator is AccessControl {
         address priceFeed_,
         uint256 maxSlippageBps_
     ) {
-        if (admin == address(0) || operator == address(0) || priceFeed_ == address(0)) revert ZeroAddress();
+        if (admin == address(0) || operator == address(0) || priceFeed_ == address(0)) {
+            revert ZeroAddress();
+        }
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(OPERATOR_ROLE, operator);
         trancheCapPerPeriod = trancheCap;
