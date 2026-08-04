@@ -141,7 +141,16 @@ done
 # ── Step 3: buyback K613 with the Treasury's USDC, rewards to stakers ───────
 say "3. buyback + distribute to stakers"
 TB=$(bal "$USDC" "$TREASURY")
-if [ -z "$TB" ] || [ "$TB" = "0" ]; then
+ADMIN_ROLE=0x0000000000000000000000000000000000000000000000000000000000000000
+IS_TADMIN=$(cast call "$TREASURY" "hasRole(bytes32,address)(bool)" "$ADMIN_ROLE" "$ME" --rpc-url "$RPC" | awk '{print $1}')
+if [ "$IS_TADMIN" != "true" ]; then
+  # Expected after the handover: Treasury admin is the Safe, so the buyback is a
+  # multisig transaction (docs/safe-batches/monthly-buyback.json). Not a failure —
+  # this lets the script run unattended (cron) without a red exit.
+  echo "  buyback пропущен: Treasury admin = Safe, нужна подпись 2/3"
+  echo "  USDC готов к выкупу на Treasury: ${TB:-0}"
+  echo "  батч: docs/safe-batches/monthly-buyback.json (подставить amountIn=$TB и minK613Out)"
+elif [ -z "$TB" ] || [ "$TB" = "0" ]; then
   echo "  skip buyback (Treasury USDC = 0)"
 else
   Q=$(quote "$USDC" "$K613" "$TB" "$BUYBACK_POOL_FEE")
