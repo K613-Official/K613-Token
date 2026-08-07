@@ -21,7 +21,7 @@ contract ApproveTreasuryXk613AavePull is Script {
     bytes32 private constant INCENTIVES_CONTROLLER_ID = keccak256("INCENTIVES_CONTROLLER");
     uint256 private constant MONAD_MAINNET = 143;
 
-    address private constant TREASURY_MONAD = 0x3377BAB9A510A586627D2f9013e132d269Eb9871;
+    address private constant TREASURY_MONAD = 0x10aCE88f2F2c361218615F5dcA8987DD16C54282;
     address private constant XK613_MONAD = 0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5;
     address private constant POOL_MONAD = 0x4Ba3856a4d851d39C27e2E866daB7A95eF6e0113;
 

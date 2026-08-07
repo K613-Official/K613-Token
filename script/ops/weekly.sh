@@ -26,7 +26,8 @@ SLIPPAGE_BPS="${SLIPPAGE_BPS:-100}"
 ME=$(cast wallet address "$PK")
 
 RD=0xE3E8925E8554464611c86419B9e99AD7Cd47428f
-TREASURY=0x3377BAB9A510A586627D2f9013e132d269Eb9871
+TREASURY=0x10aCE88f2F2c361218615F5dcA8987DD16C54282
+STAKING=0x5A3DA7644c25F0A74DCb0bA13ae38214D8856415
 SAFE=0x7D5cF07621228a3D622b4695A1e28991E4620eBB
 COLLECTOR=0xF689bB846eE7DD51947c3368cc3ee26713D3ED83
 POOL_AAVE=0x4Ba3856a4d851d39C27e2E866daB7A95eF6e0113
@@ -42,6 +43,21 @@ PAP=0x1f6E754C6F7A49e2d69e5341d65EcB8f8506C69c
 POOL_K613=0xDD5557CEcFD7Ba0F5F2A1C38967d83Df2951a4F4
 ADMIN_ROLE=0x0000000000000000000000000000000000000000000000000000000000000000
 FUNDS_ADMIN_ROLE=0x46554e44535f41444d494e000000000000000000000000000000000000000000
+
+# Адреса выше переведены на V2 заранее, до исполнения катовера. Пока Safe не отдал
+# StakingV2 роль минтера, запуск этого скрипта наполовину провалится и наполовину
+# сработает не туда: transfer USDC на TreasuryV2 пройдёт и деньги там осядут, а
+# topUpTranche упрётся в StakingV2.stake -> xK613.mint -> OnlyMinter и ревертнётся.
+# Определяем готовность по факту на чейне, а не по календарю.
+_minter=$(cast call "$XK613" "minter()(address)" --rpc-url "$RPC" 2>/dev/null || echo "")
+if [ "$(printf '%s' "$_minter" | tr 'A-Z' 'a-z')" != "$(printf '%s' "$STAKING" | tr 'A-Z' 'a-z')" ]; then
+  echo "СТОП: катовер на V2 не исполнен." >&2
+  echo "  xK613.minter = ${_minter:-<нет ответа>}" >&2
+  echo "  ожидается    = $STAKING (StakingV2)" >&2
+  echo "Скрипт уже указывает на TreasuryV2/StakingV2 — запускать только после того," >&2
+  echo "как Safe исполнит docs/safe-batches/v2-cutover-2-switch.json." >&2
+  exit 1
+fi
 
 # symbol : underlying : decimals : fee-tier для свапа в USDC (0 = пула нет, копим)
 ASSETS=(

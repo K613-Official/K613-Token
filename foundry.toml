@@ -21,3 +21,7 @@ optimizer = true
 optimizer_runs = 800
 via_ir = false
 evm_version = "istanbul"
+
+# Верификация на Monad mainnet. Ключ Etherscan V2 работает для chainId 143.
+[etherscan]
+monad = { key = "${ETHERSCAN_API_KEY}", chain = 143, url = "https://api.etherscan.io/v2/api?chainid=143" }

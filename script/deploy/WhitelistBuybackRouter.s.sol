@@ -21,7 +21,7 @@ contract WhitelistBuybackRouter is Script {
     /// @notice Uniswap V3 SwapRouter02 on Monad mainnet (see docs/OPERATIONS_SOP.md D.3).
     address private constant SWAP_ROUTER_02 = 0xfE31F71C1b106EAc32F1A19239c9a9A72ddfb900;
     /// @notice Treasury on Monad mainnet, deployed 2026-07-11 (see docs/OPERATIONS_SOP.md D.1).
-    address private constant TREASURY_MONAD = 0x3377BAB9A510A586627D2f9013e132d269Eb9871;
+    address private constant TREASURY_MONAD = 0x10aCE88f2F2c361218615F5dcA8987DD16C54282;
 
     function run() external {
         if (block.chainid != MONAD_MAINNET) revert WrongNetwork(block.chainid);

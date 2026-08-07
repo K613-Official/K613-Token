@@ -30,7 +30,7 @@ contract SwapCollectedToUsdc is Script {
     address private constant SWAP_ROUTER_02 = 0xfE31F71C1b106EAc32F1A19239c9a9A72ddfb900;
     address private constant QUOTER_V2 = 0x661E93cca42AfacB172121EF892830cA3b70F08d;
     address private constant USDC = 0x754704Bc059F8C67012fEd69BC8A327a5aafb603;
-    address private constant TREASURY = 0x3377BAB9A510A586627D2f9013e132d269Eb9871;
+    address private constant TREASURY = 0x10aCE88f2F2c361218615F5dcA8987DD16C54282;
 
     struct Route {
         address token;
