@@ -505,4 +505,21 @@ contract K613TreasuryOperatorV2Test is Test {
         }
         assertLe(xk613.balanceOf(address(treasury)), TRANCHE_CAP);
     }
+
+    // -------------------------------------------------------------------------------------
+    //  currentPeriod — the boundary the budgets reset on
+    // -------------------------------------------------------------------------------------
+
+    /// @notice `currentPeriod` is a plain `block.timestamp / PERIOD`, so periods are aligned to the
+    ///         epoch, not to when the operator was deployed or last ran.
+    function test_CurrentPeriod_IsEpochAlignedNotDeployAligned() public {
+        assertEq(operator.currentPeriod(), block.timestamp / PERIOD);
+
+        uint256 p = operator.currentPeriod();
+        vm.warp((p + 1) * PERIOD - 1);
+        assertEq(operator.currentPeriod(), p, "still the same period one second before the boundary");
+
+        vm.warp((p + 1) * PERIOD);
+        assertEq(operator.currentPeriod(), p + 1, "rolls exactly on the boundary");
+    }
 }

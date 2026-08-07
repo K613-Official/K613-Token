@@ -413,4 +413,38 @@ contract StakingV2MigrationTest is Test {
         assertEq(xk613.balanceOf(address(this)), 0);
         assertEq(v2.totalBacking(), 1_000 * ONE);
     }
+
+    /// @notice `setMaxExitRequests` had no test on V2 at all, yet it is the only bound on how many
+    ///         requests a wallet can park in the contract — and `exitPendingSum` loops over them.
+    function test_SetMaxExitRequests_GatesTheQueueAndIsAdminOnly() public {
+        xk613.setMinter(address(v2));
+
+        v2.setMaxExitRequests(1);
+        assertEq(v2.maxExitRequests(), 1);
+        assertEq(v2.MAX_EXIT_REQUESTS(), 1, "legacy alias must track the setter");
+
+        vm.startPrank(bob);
+        k613.approve(address(v2), 1_000 * ONE);
+        v2.stake(1_000 * ONE);
+        xk613.approve(address(v2), 1_000 * ONE);
+        v2.initiateExit(400 * ONE);
+        vm.expectRevert(StakingV2.ExitQueueFull.selector);
+        v2.initiateExit(400 * ONE);
+        vm.stopPrank();
+
+        // Raising the cap unblocks the same caller without touching the existing request.
+        v2.setMaxExitRequests(2);
+        vm.startPrank(bob);
+        v2.initiateExit(400 * ONE);
+        vm.stopPrank();
+        assertEq(v2.exitQueueLength(bob), 2);
+        assertEq(v2.exitPendingSum(bob), 800 * ONE);
+
+        vm.expectRevert(StakingV2.InvalidMaxExitRequests.selector);
+        v2.setMaxExitRequests(0);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        v2.setMaxExitRequests(5);
+    }
 }

@@ -981,4 +981,122 @@ contract RewardsDistributorTest is Test {
         distributor.claim();
         assertGt(token.balanceOf(alice), before);
     }
+
+    // -------------------------------------------------------------------------------------
+    // Solvency: the pool pays rewards out of the same xK613 balance that holds deposits.
+    // There is no segregation, so any reward credited without matching xK613 actually arriving
+    // is silently funded by other users' principal. The two tests below pin the two ways that
+    // happens, so a future change either preserves the behaviour knowingly or breaks a test.
+    // -------------------------------------------------------------------------------------
+
+    /// @notice Penalties are credited to `accRewardPerShare` whether or not the K613 backing them
+    ///         was actually converted to xK613. `_stakeHeldK613` is deliberately non-fatal — it
+    ///         swallows a paused (or non-minter) Staking — but `_distributePending` runs anyway.
+    ///         The credit therefore lands against xK613 that does not exist, and the shortfall is
+    ///         taken from depositors, who discover it only when the last of them cannot withdraw.
+    function testPenaltyCreditedWhileStakingPaused_MakesPoolInsolvent() public {
+        uint256 penalty = 10 * ONE;
+        k613.transfer(address(distributor), penalty);
+        distributor.addPendingPenalty(penalty);
+
+        // Exactly the state the migration runbook creates between its two Safe batches.
+        staking.pause();
+
+        uint256 xkBefore = token.balanceOf(address(distributor));
+        uint256 accBefore = distributor.accRewardPerShare();
+
+        vm.warp(block.timestamp + EPOCH);
+        distributor.advanceEpoch();
+
+        // The credit happened; the xK613 to honour it did not.
+        assertGt(distributor.accRewardPerShare(), accBefore, "penalty credited");
+        assertEq(token.balanceOf(address(distributor)), xkBefore, "no xK613 materialised");
+        assertEq(k613.balanceOf(address(distributor)), penalty, "K613 still unconverted");
+
+        // Liabilities now exceed assets by exactly the penalty.
+        uint256 liability =
+            distributor.totalDeposits() + distributor.pendingRewardsOf(alice) + distributor.pendingRewardsOf(bob);
+        assertEq(liability, xkBefore + penalty, "pool short by the penalty");
+
+        // And the shortfall is real money: Alice claims out of Bob's principal, then Bob cannot
+        // withdraw the deposit he never touched.
+        vm.prank(alice);
+        distributor.claim();
+
+        vm.prank(alice);
+        distributor.withdraw(1_000 * ONE);
+
+        vm.prank(bob);
+        vm.expectRevert();
+        distributor.withdraw(1_000 * ONE);
+    }
+
+    /// @notice `MIN_INITIAL_DEPOSIT` is 1e12 — a millionth of one xK613 — so it bounds nothing.
+    ///         Rewards notified while the pool is empty queue in `pendingRewards` and are handed in
+    ///         full to whoever deposits next, at any size. Reachable in practice: a migration that
+    ///         asks everyone to withdraw empties `totalDeposits`.
+    function testEmptyPoolQueuedRewards_SweptByDustFirstDepositor() public {
+        vm.prank(alice);
+        distributor.withdraw(1_000 * ONE);
+        vm.prank(bob);
+        distributor.withdraw(1_000 * ONE);
+        assertEq(distributor.totalDeposits(), 0, "pool emptied");
+
+        uint256 queued = 500 * ONE;
+        token.transfer(address(distributor), queued);
+        distributor.notifyReward(queued);
+        assertEq(distributor.pendingRewards(), queued, "queued while empty");
+
+        address sniper = address(0x51195);
+        uint256 dust = distributor.MIN_INITIAL_DEPOSIT();
+        token.mint(sniper, dust);
+
+        vm.startPrank(sniper);
+        token.approve(address(distributor), dust);
+        distributor.deposit(dust);
+        vm.stopPrank();
+
+        // A 0.000001 xK613 stake collects the entire queue.
+        assertEq(distributor.pendingRewardsOf(sniper), queued, "dust deposit takes the whole queue");
+
+        uint256 before = token.balanceOf(sniper);
+        vm.prank(sniper);
+        distributor.claim();
+        assertEq(token.balanceOf(sniper) - before, queued, "and can withdraw it");
+    }
+
+    /// @notice The precondition for the insolvency above is not exotic — it is the normal state of
+    ///         the pool between a penalty arriving and the next claim. `deposit` and `withdraw`
+    ///         reach `_distributePending` but never `_stakeHeldK613`, so they credit a penalty as
+    ///         reward while its K613 is still K613. Observed live on Monad mainnet on 2026-08-06:
+    ///         two penalties (5 and 10 K613) arrived from Staking, a deposit or withdrawal credited
+    ///         them, and `pendingPenalties` read zero with 15 unconverted K613 still on the balance.
+    ///         That is why the pre-flight check before any pause is the K613 balance, not
+    ///         `pendingPenalties` — the latter is zeroed at exactly the moment the debt appears.
+    function testDepositCreditsPenaltyWithoutConverting_ZeroingPendingPenalties() public {
+        uint256 penalty = 10 * ONE;
+        k613.transfer(address(distributor), penalty);
+        distributor.addPendingPenalty(penalty);
+        assertEq(distributor.pendingPenalties(), penalty);
+
+        uint256 accBefore = distributor.accRewardPerShare();
+
+        // A deposit by anyone — no claim, no epoch advance.
+        address newcomer = address(0xDEAD01);
+        token.mint(newcomer, 100 * ONE);
+        vm.startPrank(newcomer);
+        token.approve(address(distributor), 100 * ONE);
+        distributor.deposit(100 * ONE);
+        vm.stopPrank();
+
+        assertGt(distributor.accRewardPerShare(), accBefore, "penalty was credited");
+        assertEq(distributor.pendingPenalties(), 0, "and the counter is now zero");
+        assertEq(k613.balanceOf(address(distributor)), penalty, "but the K613 was never converted");
+
+        // The state the pre-flight must catch: nothing pending, yet a real conversion debt.
+        assertTrue(
+            distributor.pendingPenalties() == 0 && k613.balanceOf(address(distributor)) > 0,
+            "pendingPenalties is not a safe pause gate"
+        );
+    }
 }
