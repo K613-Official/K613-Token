@@ -26,6 +26,10 @@ STAKING_V1=0x36451F6b4c06916aafd16359CCf99eB1f584DB0b
 TREASURY_V1=0x3377BAB9A510A586627D2f9013e132d269Eb9871
 TREASURY_V2=0x10aCE88f2F2c361218615F5dcA8987DD16C54282
 RD=0xE3E8925E8554464611c86419B9e99AD7Cd47428f
+# Развёрнута и верифицирована 2026-08-07, vault=TreasuryV2. Константа, а не env:
+# адрес известен и постоянен, а переменная окружения — лишний способ ошибиться.
+# NEW_STRATEGY= в окружении перебивает её (нужно только для репетиции на форке).
+PULL_STRATEGY_V2=0x58fbEdaC5D64022EecB3CF9115e5c9a7A82368AD
 
 call() { cast call "$1" "$2" ${3:-} --rpc-url "$RPC" | awk '{print $1}'; }
 human() { python3 -c "print(f'{int('$1')/1e18:,.6f}')"; }
@@ -65,7 +69,7 @@ if [ "$STEP" = "1" ]; then
 else
   SRC="$ROOT/docs/safe-batches/v2-cutover-2-switch.json"
   OUT=/tmp/cutover-batch-2.json
-  : "${NEW_STRATEGY:?установи NEW_STRATEGY=0x... (вывод DeployXk613PullStrategyV2.s.sol)}"
+  NEW_STRATEGY="${NEW_STRATEGY:-$PULL_STRATEGY_V2}"
 
   # Непустой переменной мало. Батч выдаёт этому адресу безлимитный аллаунс на xK613
   # казны, так что проверяем, что это действительно стратегия и действительно наша.

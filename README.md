@@ -38,6 +38,7 @@ If you believe you have found a security issue, please contact the team privatel
 | K613SeasonClaim | `0xe41b3D63c7Aa5E54C57c9810217a60dc887364Be` |
 | K613/USDC pool (Uniswap V3, 0.05%) | `0xDD5557CEcFD7Ba0F5F2A1C38967d83Df2951a4F4` |
 | K613LpTimelock (LP locked until Jul 2027) | `0xbDB83DF26F8e554bd20754df3Dde7cab958956D5` |
+| PullRewardsTransferStrategy (LM, xK613) | `0x58fbEdaC5D64022EecB3CF9115e5c9a7A82368AD` |
 
 Tokenomics (allocation, vesting schedules, emissions) is documented at [docs.k613.net](https://docs.k613.net/k613-tokenomics).
 
