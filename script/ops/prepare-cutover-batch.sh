@@ -20,6 +20,445 @@ ENV_FILE="$(cd "$(dirname "$0")/../.." && pwd)/.env"
 RPC="${MONAD_RPC:?set MONAD_RPC}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
+# Шаблоны батчей встроены сюда намеренно. Раньше скрипт читал их из docs/, но docs/
+# целиком в .gitignore — на машине CEO файлов не оказалось и sed падал на полпути,
+# уже после чтения чейна. Держать операционный артефакт в игнорируемом каталоге —
+# значит гарантировать это на каждой второй машине.
+render() {
+  if [ "$TEMPLATE" = "1" ]; then cat <<'BATCH1_EOF'
+{
+  "version": "1.0",
+  "chainId": "143",
+  "createdAt": 1786060800000,
+  "meta": {
+    "name": "K613 V2 cutover — step 1 of 2: recover the LM stock, then freeze StakingV1",
+    "description": "Two jobs in one batch, both of which MUST happen before the minter swap. (1) Recovery: StakingV1's 311,600 K613 reserve can only leave through a burn, and after the cutover nothing can burn against it — so anything still redeemable is redeemed now. TreasuryV1's xK613 is pulled to this Safe and passed through StakingV1.redeemRewards, which burns it, debits the Treasury's system-staker position and pays out K613 1:1 with no lock and no penalty. That is only possible while StakingV1 still holds MINTER_ROLE. It roughly halves what ends up stranded. (2) Freeze: pausing StakingV1 stops xK613.totalSupply() moving, which fixes the seed amount for step 2. AMOUNT IS TIME-SENSITIVE: the PullRewardsTransferStrategy drains TreasuryV1's xK613 to lenders continuously, and every token it pulls stops being recoverable. Read the balance immediately before signing and use that number in all three places. Reversible up to the pause: StakingV1.unpause() from this same Safe. Tx 1 pauses the RewardsDistributor BEFORE StakingV1, and it must stay first: `_distributePending` credits pendingPenalties into accRewardPerShare whether or not `_stakeHeldK613` managed to convert the backing K613, and that conversion fails while Staking is paused. Every entry point that reaches `_distributePending` is whenNotPaused, so pausing RD seals it. Without this, a single claim() between the two batches would credit rewards against xK613 that does not exist and the shortfall would be paid out of depositors' principal — see testPenaltyCreditedWhileStakingPaused_MakesPoolInsolvent.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x7D5cF07621228a3D622b4695A1e28991E4620eBB"
+  },
+  "transactions": [
+    {
+      "to": "0xE3E8925E8554464611c86419B9e99AD7Cd47428f",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [],
+        "name": "pause",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    },
+    {
+      "to": "0x3377BAB9A510A586627D2f9013e132d269Eb9871",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "withdraw",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "token": "0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5",
+        "to": "0x7D5cF07621228a3D622b4695A1e28991E4620eBB",
+        "amount": "<XK613_ON_TREASURY_V1>"
+      }
+    },
+    {
+      "to": "0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "spender",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "value",
+            "type": "uint256"
+          }
+        ],
+        "name": "approve",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "spender": "0x36451F6b4c06916aafd16359CCf99eB1f584DB0b",
+        "value": "<XK613_ON_TREASURY_V1>"
+      }
+    },
+    {
+      "to": "0x36451F6b4c06916aafd16359CCf99eB1f584DB0b",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "redeemRewards",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "amount": "<XK613_ON_TREASURY_V1>"
+      }
+    },
+    {
+      "to": "0x36451F6b4c06916aafd16359CCf99eB1f584DB0b",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [],
+        "name": "pause",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    }
+  ]
+}
+BATCH1_EOF
+  else cat <<'BATCH2_EOF'
+{
+  "version": "1.0",
+  "chainId": "143",
+  "createdAt": 1786060800000,
+  "meta": {
+    "name": "K613 V2 cutover — step 2 of 2: seed V2 and swap the minter",
+    "description": "Atomic cutover from StakingV1 to StakingV2. Run only after v2-cutover-1-recover-and-freeze.json. Funds StakingV2 with K613 equal to the outstanding xK613 supply (seedBacking mints nothing, it only credits backing), then swaps the xK613 minter in the same batch, so no block ever has two minters and the cross-contract drain in test/StakingV2Migration.t.sol cannot occur. The seed comes straight from this Safe's own K613 balance (~59.4M held) — a fraction of a percent of it — so nothing needs to be routed out of TreasuryV1 first and the full K613 balance moves to TreasuryV2 untouched. The LM reward stock is rebuilt rather than carried over: the K613 recovered in step 1 is staked through StakingV2, so the xK613 lenders are paid in is minted and backed by the new contract instead of being legacy supply leaning on the seed. After this, every xK613 holder — including holders of tokens StakingV1 minted — redeems through StakingV2 with initiateExit + exit. FILL IN before signing: 0x5A3DA7644c25F0A74DCb0bA13ae38214D8856415, 0x10aCE88f2F2c361218615F5dcA8987DD16C54282, 0x58fbEdaC5D64022EecB3CF9115e5c9a7A82368AD, <SEED>, <RECOVERED_K613> — see docs/safe-batches/README.md section 3. ORDER MATTERS: seed before setMinter, and stakeForExternalIncentives only works after setMinter has made StakingV2 the minter.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x7D5cF07621228a3D622b4695A1e28991E4620eBB"
+  },
+  "transactions": [
+    {
+      "to": "0xb09582631336068d4B0089d943f40CbF46dE5189",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "spender",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "value",
+            "type": "uint256"
+          }
+        ],
+        "name": "approve",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "spender": "0x5A3DA7644c25F0A74DCb0bA13ae38214D8856415",
+        "value": "<SEED>"
+      }
+    },
+    {
+      "to": "0x5A3DA7644c25F0A74DCb0bA13ae38214D8856415",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "seedBacking",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "amount": "<SEED>"
+      }
+    },
+    {
+      "to": "0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setTransferWhitelist",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "account": "0x5A3DA7644c25F0A74DCb0bA13ae38214D8856415",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setTransferWhitelist",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "account": "0x10aCE88f2F2c361218615F5dcA8987DD16C54282",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newMinter",
+            "type": "address"
+          }
+        ],
+        "name": "setMinter",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newMinter": "0x5A3DA7644c25F0A74DCb0bA13ae38214D8856415"
+      }
+    },
+    {
+      "to": "0xE3E8925E8554464611c86419B9e99AD7Cd47428f",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "staking_",
+            "type": "address"
+          }
+        ],
+        "name": "setStaking",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "staking_": "0x5A3DA7644c25F0A74DCb0bA13ae38214D8856415"
+      }
+    },
+    {
+      "to": "0xE3E8925E8554464611c86419B9e99AD7Cd47428f",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "role",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          }
+        ],
+        "name": "grantRole",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "role": "0x5cdba25167d99b7ec892ee2622f05561f779da5483692d63a6740a77a2c8d056",
+        "account": "0x10aCE88f2F2c361218615F5dcA8987DD16C54282"
+      }
+    },
+    {
+      "to": "0xE3E8925E8554464611c86419B9e99AD7Cd47428f",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "bytes32",
+            "name": "role",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          }
+        ],
+        "name": "revokeRole",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "role": "0x5cdba25167d99b7ec892ee2622f05561f779da5483692d63a6740a77a2c8d056",
+        "account": "0x3377BAB9A510A586627D2f9013e132d269Eb9871"
+      }
+    },
+    {
+      "to": "0x3377BAB9A510A586627D2f9013e132d269Eb9871",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "withdraw",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "token": "0xb09582631336068d4B0089d943f40CbF46dE5189",
+        "to": "0x10aCE88f2F2c361218615F5dcA8987DD16C54282",
+        "amount": "<K613_ON_TREASURY_V1>"
+      }
+    },
+    {
+      "to": "0xb09582631336068d4B0089d943f40CbF46dE5189",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "value",
+            "type": "uint256"
+          }
+        ],
+        "name": "transfer",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "to": "0x10aCE88f2F2c361218615F5dcA8987DD16C54282",
+        "value": "<RECOVERED_K613>"
+      }
+    },
+    {
+      "to": "0x10aCE88f2F2c361218615F5dcA8987DD16C54282",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "stakeForExternalIncentives",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "amount": "<RECOVERED_K613>"
+      }
+    },
+    {
+      "to": "0x10aCE88f2F2c361218615F5dcA8987DD16C54282",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "spender",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "approveXk613PullRewards",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "spender": "0x58fbEdaC5D64022EecB3CF9115e5c9a7A82368AD",
+        "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+      }
+    },
+    {
+      "to": "0x36451F6b4c06916aafd16359CCf99eB1f584DB0b",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [],
+        "name": "unpause",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    },
+    {
+      "to": "0xE3E8925E8554464611c86419B9e99AD7Cd47428f",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [],
+        "name": "unpause",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    }
+  ]
+}
+BATCH2_EOF
+  fi
+}
+
 K613=0xb09582631336068d4B0089d943f40CbF46dE5189
 XK613=0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5
 STAKING_V1=0x36451F6b4c06916aafd16359CCf99eB1f584DB0b
@@ -37,7 +476,7 @@ human() { python3 -c "print(f'{int('$1')/1e18:,.6f}')"; }
 echo "=== чтение состояния чейна ==="
 
 if [ "$STEP" = "1" ]; then
-  SRC="$ROOT/docs/safe-batches/v2-cutover-1-recover-and-freeze.json"
+  SRC=""
   OUT=/tmp/cutover-batch-1.json
 
   # Долг конвертации. Проверяем баланс K613, а не pendingPenalties: вторая обнуляется
@@ -64,10 +503,12 @@ if [ "$STEP" = "1" ]; then
   [ "$XK_TR" = "0" ] && { echo "СТОП: на TreasuryV1 нет xK613, возвращать нечего." >&2; exit 1; }
   echo "  xK613 на TreasuryV1    : $(human "$XK_TR")   <- вернётся 1:1 в K613"
 
-  sed "s|<XK613_ON_TREASURY_V1>|$XK_TR|g" "$SRC" > "$OUT"
+  TEMPLATE=1 render > "$OUT.tpl"
+  sed "s|<XK613_ON_TREASURY_V1>|$XK_TR|g" "$OUT.tpl" > "$OUT"
+  rm -f "$OUT.tpl"
 
 else
-  SRC="$ROOT/docs/safe-batches/v2-cutover-2-switch.json"
+  SRC=""
   OUT=/tmp/cutover-batch-2.json
   NEW_STRATEGY="${NEW_STRATEGY:-$PULL_STRATEGY_V2}"
 
@@ -119,11 +560,13 @@ print(d['transactions'][3]['contractInputsValues']['amount'])
   echo "  возвращено в батче 1   : $(human "$RECOVERED")"
   echo "  новая LM-стратегия     : $NEW_STRATEGY"
 
+  TEMPLATE=2 render > "$OUT.tpl"
   sed -e "s|<SEED>|$SEED|g" \
       -e "s|<K613_ON_TREASURY_V1>|$K_TR|g" \
       -e "s|<RECOVERED_K613>|$RECOVERED|g" \
       -e "s|<NEW_PULL_STRATEGY>|$NEW_STRATEGY|g" \
-      "$SRC" > "$OUT"
+      "$OUT.tpl" > "$OUT"
+  rm -f "$OUT.tpl"
 fi
 
 echo
