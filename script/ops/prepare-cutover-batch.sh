@@ -499,9 +499,28 @@ if [ "$STEP" = "1" ]; then
   fi
   echo "  xK613.minter           : StakingV1  ok"
 
-  XK_TR=$(call "$XK613" "balanceOf(address)(uint256)" "$TREASURY_V1")
-  [ "$XK_TR" = "0" ] && { echo "СТОП: на TreasuryV1 нет xK613, возвращать нечего." >&2; exit 1; }
-  echo "  xK613 на TreasuryV1    : $(human "$XK_TR")   <- вернётся 1:1 в K613"
+  BAL=$(call "$XK613" "balanceOf(address)(uint256)" "$TREASURY_V1")
+  [ "$BAL" = "0" ] && { echo "СТОП: на TreasuryV1 нет xK613, возвращать нечего." >&2; exit 1; }
+
+  # Забираем НЕ весь баланс. Две причины, обе проверены на живом чейне:
+  #
+  #  1. Сумма фиксируется здесь, а исполняется после двух подписей — часами позже.
+  #     Всё это время PullRewardsTransferStrategy продолжает выдавать xK613 лендерам
+  #     по их claim(), и она к паузам иммунна: performTransfer — обычный перевод,
+  #     ни Staking, ни RD его не гейтят. Просядет баланс ниже суммы в батче —
+  #     withdraw ревертнётся и упадёт ВЕСЬ батч.
+  #
+  #  2. После батча 1 активной остаётся СТАРАЯ стратегия, которая тянет из
+  #     TreasuryV1. Выгребем подчистую — claim() лендеров начнёт ревертиться и будет
+  #     ревертиться до шага 5 (setTransferStrategy). Остаток работает как буфер на
+  #     это окно.
+  #
+  # 500 bps по наблюдаемому расходу (~320 xK613/час) покрывают примерно сутки.
+  HAIRCUT_BPS="${HAIRCUT_BPS:-500}"
+  XK_TR=$(python3 -c "print($BAL * (10000 - $HAIRCUT_BPS) // 10000)")
+  echo "  xK613 на TreasuryV1    : $(human "$BAL")"
+  echo "  берём (запас $HAIRCUT_BPS bps): $(human "$XK_TR")   <- вернётся 1:1 в K613"
+  echo "  остаётся буфером       : $(human "$(python3 -c "print($BAL - $XK_TR)")")   <- на claim'ы до шага 5"
 
   TEMPLATE=1 render > "$OUT.tpl"
   sed "s|<XK613_ON_TREASURY_V1>|$XK_TR|g" "$OUT.tpl" > "$OUT"
