@@ -2,11 +2,6 @@
 # Восстанавливает LM-эмиссию ровно в те значения, что стояли на чейне до обнуления
 # 2026-08-10 02:27 UTC перед катовером на StakingV2/TreasuryV2.
 #
-# Почему отдельный скрипт, а не set-lm-emission.sh: та таблица посчитана 2026-07-31
-# под целевые APR и даёт 479,452 K613/нед против 3,639,041, которые реально стояли —
-# расхождение по рынкам от 1.8x до 34x, никаким множителем не сводится. Значения ниже
-# сняты из событий AssetConfigUpdated (поле oldEmission) той самой транзакции обнуления,
-# то есть это факт с чейна, а не пересчёт.
 #
 # Итого восстанавливает 24.93M K613/год — бюджет LM Year-1.
 #
@@ -72,11 +67,15 @@ for entry in "${ASSETS[@]}"; do
     printf "  DRY  %-8s %-7s %14s K613/нед\n" "$SYM" "$KIND" "$WK"
     continue
   fi
-  if cast send --private-key "$PK" --rpc-url "$RPC" -g 200 "$EMISSION_MANAGER" \
-      "setEmissionPerSecond(address,address[],uint88[])" "$TOK" "[$XK613]" "[$EPS]" >/dev/null 2>&1; then
+  # Без -g: у cast send это --gas-limit (200 газа = мгновенный провал), а НЕ множитель
+  # оценки, как -g у forge script. Оценку cast делает сам и на Monad она проходит.
+  ERR=$(cast send --private-key "$PK" --rpc-url "$RPC" "$EMISSION_MANAGER" \
+      "setEmissionPerSecond(address,address[],uint88[])" "$TOK" "[$XK613]" "[$EPS]" 2>&1 >/dev/null)
+  if [ $? -eq 0 ]; then
     printf "  OK   %-8s %-7s %14s K613/нед\n" "$SYM" "$KIND" "$WK"
   else
-    printf "  FAIL %-8s %-7s\n" "$SYM" "$KIND"; FAILS=$((FAILS+1))
+    printf "  FAIL %-8s %-7s  %s\n" "$SYM" "$KIND" "$(printf '%s' "$ERR" | head -1)"
+    FAILS=$((FAILS+1))
   fi
 done
 

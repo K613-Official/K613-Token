@@ -550,7 +550,7 @@ if [ "$STEP" = "1" ]; then
     echo "СТОП: на RewardsDistributor $(human "$DEBT") K613 не конвертированы." >&2
     echo "  Заморозка сейчас оставит пул коротким на эту сумму до конца миграции." >&2
     echo "  Дождись чужого claim() или выполни advanceEpoch() при живом StakingV1:" >&2
-    echo "    cast send $RD 'advanceEpoch()' --private-key \$PRIVATE_KEY --rpc-url \$MONAD_RPC -g 200" >&2
+    echo "    cast send $RD 'advanceEpoch()' --private-key \$PRIVATE_KEY --rpc-url \$MONAD_RPC" >&2
     echo "  Эпоха созревает: $(call $RD 'nextEpochAt()(uint256)')" >&2
     exit 1
   fi
