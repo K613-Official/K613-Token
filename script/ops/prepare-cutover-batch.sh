@@ -3,15 +3,16 @@
 # шаблон, проверяет результат и печатает по-человечески, что именно будет подписано.
 #
 #   ./script/ops/prepare-cutover-batch.sh 1     # возврат + заморозка
-#   ./script/ops/prepare-cutover-batch.sh 2     # катовер   (нужен NEW_STRATEGY=0x...)
+#   ./script/ops/prepare-cutover-batch.sh 2     # катовер
+#   ./script/ops/prepare-cutover-batch.sh 3     # уборка: TreasuryV1 и OperatorV1 в отставку
 #
 # Готовый файл кладётся в /tmp/cutover-batch-N.json — его и заливать в Transaction Builder.
 # Скрипт только читает чейн, ничего не отправляет.
 set -euo pipefail
 
 STEP="${1:-}"
-if [ "$STEP" != "1" ] && [ "$STEP" != "2" ]; then
-  echo "usage: $0 <1|2>" >&2
+if [ "$STEP" != "1" ] && [ "$STEP" != "2" ] && [ "$STEP" != "3" ]; then
+  echo "usage: $0 <1|2|3>" >&2
   exit 1
 fi
 
@@ -137,6 +138,68 @@ render() {
   ]
 }
 BATCH1_EOF
+  elif [ "$TEMPLATE" = "3" ]; then cat <<'BATCH3_EOF'
+{
+  "version": "1.0",
+  "chainId": "143",
+  "createdAt": 1786060800000,
+  "meta": {
+    "name": "K613 V2 cutover — step 3: retire TreasuryV1 and OperatorV1",
+    "description": "Cleanup after the cutover. RUN ONLY AFTER the emission has been repointed to the new PullRewardsTransferStrategy (0x58fbEdaC…) — tx 1 empties the xK613 buffer that the OLD strategy is still paying lender claims from, so doing this while the old strategy is live breaks every claim until the switch happens. Tx 2 removes K613TreasuryOperatorV2's predecessor from TreasuryV1's admins: OperatorV1 has DEFAULT_ADMIN_ROLE there and its TREASURY address is immutable, so it can never operate anything else — leaving the role granted is a standing key on a contract nobody watches any more. Tx 3 pauses TreasuryV1, making stakeForExternalIncentives, depositRewards and buyback revert; withdraw stays available to the Safe, so nothing is trapped. The Safe deliberately keeps DEFAULT_ADMIN_ROLE on TreasuryV1: it is the only way to recover anything that lands there by mistake later. FILL IN before signing: <XK613_REMAINDER>.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x7D5cF07621228a3D622b4695A1e28991E4620eBB"
+  },
+  "transactions": [
+    {
+      "to": "0x3377BAB9A510A586627D2f9013e132d269Eb9871",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          { "internalType": "address", "name": "token", "type": "address" },
+          { "internalType": "address", "name": "to", "type": "address" },
+          { "internalType": "uint256", "name": "amount", "type": "uint256" }
+        ],
+        "name": "withdraw",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "token": "0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5",
+        "to": "0x10aCE88f2F2c361218615F5dcA8987DD16C54282",
+        "amount": "<XK613_REMAINDER>"
+      }
+    },
+    {
+      "to": "0x3377BAB9A510A586627D2f9013e132d269Eb9871",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [
+          { "internalType": "bytes32", "name": "role", "type": "bytes32" },
+          { "internalType": "address", "name": "account", "type": "address" }
+        ],
+        "name": "revokeRole",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "role": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "account": "0xEf22fb7C5f3aE8108672f8566A1b3e5068E218a0"
+      }
+    },
+    {
+      "to": "0x3377BAB9A510A586627D2f9013e132d269Eb9871",
+      "value": "0",
+      "data": null,
+      "contractMethod": {
+        "inputs": [],
+        "name": "pause",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    }
+  ]
+}
+BATCH3_EOF
   else cat <<'BATCH2_EOF'
 {
   "version": "1.0",
@@ -464,6 +527,7 @@ XK613=0x9064d55A8A8473fA39c41A16492Fa1094Eb4E8b5
 STAKING_V1=0x36451F6b4c06916aafd16359CCf99eB1f584DB0b
 TREASURY_V1=0x3377BAB9A510A586627D2f9013e132d269Eb9871
 TREASURY_V2=0x10aCE88f2F2c361218615F5dcA8987DD16C54282
+STAKING_V2=0x5A3DA7644c25F0A74DCb0bA13ae38214D8856415
 RD=0xE3E8925E8554464611c86419B9e99AD7Cd47428f
 # Развёрнута и верифицирована 2026-08-07, vault=TreasuryV2. Константа, а не env:
 # адрес известен и постоянен, а переменная окружения — лишний способ ошибиться.
@@ -526,7 +590,7 @@ if [ "$STEP" = "1" ]; then
   sed "s|<XK613_ON_TREASURY_V1>|$XK_TR|g" "$OUT.tpl" > "$OUT"
   rm -f "$OUT.tpl"
 
-else
+elif [ "$STEP" = "2" ]; then
   SRC=""
   OUT=/tmp/cutover-batch-2.json
   NEW_STRATEGY="${NEW_STRATEGY:-$PULL_STRATEGY_V2}"
@@ -586,6 +650,36 @@ print(d['transactions'][3]['contractInputsValues']['amount'])
       -e "s|<NEW_PULL_STRATEGY>|$NEW_STRATEGY|g" \
       "$OUT.tpl" > "$OUT"
   rm -f "$OUT.tpl"
+elif [ "$STEP" = "3" ]; then
+  OUT=/tmp/cutover-batch-3.json
+
+  # Пока активна СТАРАЯ стратегия, остаток на TreasuryV1 — это касса, из которой
+  # оплачиваются claim'ы лендеров. Опустошить её раньше переключения = сломать клеймы.
+  LIVE=$(cast call 0xe1d8B642c83587Df813a36F361C682C0475c4ea4 \
+    "getTransferStrategy(address)(address)" "$XK613" --rpc-url "$RPC" | awk '{print $1}')
+  if [ "$(printf '%s' "$LIVE" | tr 'A-Z' 'a-z')" != "$(printf '%s' "$PULL_STRATEGY_V2" | tr 'A-Z' 'a-z')" ]; then
+    echo "СТОП: активна ещё старая стратегия ($LIVE)." >&2
+    echo "  Сначала setTransferStrategy на $PULL_STRATEGY_V2 ключом emission admin," >&2
+    echo "  иначе эта уборка заберёт кассу, из которой сейчас платят лендерам." >&2
+    exit 1
+  fi
+  echo "  активная стратегия     : новая  ok"
+
+  MINTER=$(call "$XK613" "minter()(address)")
+  if [ "$(printf '%s' "$MINTER" | tr 'A-Z' 'a-z')" != "$(printf '%s' "$STAKING_V2" | tr 'A-Z' 'a-z')" ]; then
+    echo "СТОП: xK613.minter = $MINTER, катовер не завершён." >&2
+    exit 1
+  fi
+  echo "  xK613.minter           : StakingV2  ok"
+
+  REM=$(call "$XK613" "balanceOf(address)(uint256)" "$TREASURY_V1")
+  [ "$REM" = "0" ] && { echo "СТОП: на TreasuryV1 нет xK613, забирать нечего." >&2; exit 1; }
+  echo "  остаток на TreasuryV1  : $(human "$REM")   -> переедет на TreasuryV2"
+
+  TEMPLATE=3 render > "$OUT.tpl"
+  sed "s|<XK613_REMAINDER>|$REM|g" "$OUT.tpl" > "$OUT"
+  rm -f "$OUT.tpl"
+
 fi
 
 echo
