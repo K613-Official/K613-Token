@@ -21,7 +21,8 @@ ENV_FILE="$(cd "$(dirname "$0")/../.." && pwd)/.env"
 if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
 RPC="${MONAD_RPC:?set MONAD_RPC}"
 PK="${PRIVATE_KEY:?set PRIVATE_KEY}"
-OP="${OPERATOR_CONTRACT:?set OPERATOR_CONTRACT (адрес K613TreasuryOperator в .env)}"
+OPERATOR_V2=0xc7E2Cb01634b2Ea02581aAC763367A7426fa6dBC
+OP="${OPERATOR_CONTRACT:-$OPERATOR_V2}"
 SLIPPAGE_BPS="${SLIPPAGE_BPS:-100}"
 ME=$(cast wallet address "$PK")
 
